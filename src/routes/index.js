@@ -32,6 +32,11 @@ const cashfreePaymentController = require('../controllers/Payment/cashfreePaymen
 const { authenticateAdminToken, requirePower, requireSuperAdmin } = require('../middleware/adminAuth');
 const { authenticateToken, requireVendor, requireVendorOwner, requireUser, requireUserOwner, verifyMerchantToken } = require('../middleware/auth');
 const { upload, handleMulterError } = require('../middleware/upload');
+const { validateRequest } = require('../middleware/validate');
+const { createEnquirySchema, updateEnquiryStatusSchema } = require('../schemas/enquirySchema');
+const { createServiceSchema, updateServiceSchema } = require('../schemas/serviceSchema');
+const { orderPaymentSessionSchema, directPaySchema, verifyPaymentSchema } = require('../schemas/paymentSchema');
+const { createTicketSchema } = require('../schemas/supportSchema');
 const { query } = require('../models/db');
 
 
@@ -41,28 +46,28 @@ router.get('/version', (req, res) => res.redirect('/health/version'));
 router.get(['/ping', '/api/ping'], (req, res) => res.status(200).json({ status: 'ok', message: 'pong', timestamp: new Date().toISOString() }));
 
 // ── Service Vendor Enquiry Direct Routes ────────────────────
-router.post('/api/enquiries', authenticateToken, requireUser, enquiryController.createEnquiry);
-router.post('/api/vendors/enquiries', authenticateToken, requireUser, enquiryController.createEnquiry);
-router.post('/api/vendors/:vendorId/enquiries', authenticateToken, requireUser, enquiryController.createEnquiry);
+router.post('/api/enquiries', authenticateToken, requireUser, validateRequest(createEnquirySchema), enquiryController.createEnquiry);
+router.post('/api/vendors/enquiries', authenticateToken, requireUser, validateRequest(createEnquirySchema), enquiryController.createEnquiry);
+router.post('/api/vendors/:vendorId/enquiries', authenticateToken, requireUser, validateRequest(createEnquirySchema), enquiryController.createEnquiry);
 router.get('/api/vendors/:vendorId/enquiries', authenticateToken, requireVendorOwner, enquiryController.getVendorEnquiries);
 router.get('/api/user/:userId/enquiries', authenticateToken, requireUserOwner, enquiryController.getUserEnquiries);
 router.get('/api/users/:userId/enquiries', authenticateToken, requireUserOwner, enquiryController.getUserEnquiries);
-router.patch('/api/enquiries/:enquiryId', authenticateToken, requireVendor, enquiryController.updateEnquiryStatus);
-router.put('/api/enquiries/:enquiryId', authenticateToken, requireVendor, enquiryController.updateEnquiryStatus);
-router.patch('/api/vendors/:vendorId/enquiries/:enquiryId', authenticateToken, requireVendorOwner, enquiryController.updateEnquiryStatus);
-router.post('/api/merchants/enquiries', authenticateToken, requireUser, enquiryController.createEnquiry);
-router.post('/api/merchants/:vendorId/enquiries', authenticateToken, requireUser, enquiryController.createEnquiry);
+router.patch('/api/enquiries/:enquiryId', authenticateToken, requireVendor, validateRequest(updateEnquiryStatusSchema), enquiryController.updateEnquiryStatus);
+router.put('/api/enquiries/:enquiryId', authenticateToken, requireVendor, validateRequest(updateEnquiryStatusSchema), enquiryController.updateEnquiryStatus);
+router.patch('/api/vendors/:vendorId/enquiries/:enquiryId', authenticateToken, requireVendorOwner, validateRequest(updateEnquiryStatusSchema), enquiryController.updateEnquiryStatus);
+router.post('/api/merchants/enquiries', authenticateToken, requireUser, validateRequest(createEnquirySchema), enquiryController.createEnquiry);
+router.post('/api/merchants/:vendorId/enquiries', authenticateToken, requireUser, validateRequest(createEnquirySchema), enquiryController.createEnquiry);
 router.get('/api/merchants/:vendorId/enquiries', authenticateToken, requireVendorOwner, enquiryController.getVendorEnquiries);
-router.patch('/api/merchants/:vendorId/enquiries/:enquiryId', authenticateToken, requireVendorOwner, enquiryController.updateEnquiryStatus);
+router.patch('/api/merchants/:vendorId/enquiries/:enquiryId', authenticateToken, requireVendorOwner, validateRequest(updateEnquiryStatusSchema), enquiryController.updateEnquiryStatus);
 
 // ── Service Vendor Services Direct & Global Routes ───────────
 router.get(['/api/services', '/services'], serviceController.getAllServices);
-router.post(['/api/vendors/:vendorId/services', '/api/vendor/:vendorId/services', '/api/merchants/:vendorId/services', '/api/merchant/:vendorId/services'], upload.any(), handleMulterError, authenticateToken, requireVendorOwner, serviceController.addService);
+router.post(['/api/vendors/:vendorId/services', '/api/vendor/:vendorId/services', '/api/merchants/:vendorId/services', '/api/merchant/:vendorId/services'], upload.any(), handleMulterError, authenticateToken, requireVendorOwner, validateRequest(createServiceSchema), serviceController.addService);
 router.get(['/api/vendors/:vendorId/services', '/api/vendor/:vendorId/services', '/api/merchants/:vendorId/services', '/api/merchant/:vendorId/services', '/api/stores/:vendorId/services', '/api/store/:vendorId/services'], serviceController.getVendorServices);
 router.get(['/api/vendors/:vendorId/services/:serviceId', '/api/services/:serviceId'], serviceController.getServiceById);
-router.put(['/api/vendors/:vendorId/services/:serviceId', '/api/vendor/:vendorId/services/:serviceId', '/api/services/:serviceId'], upload.any(), handleMulterError, authenticateToken, requireVendorOwner, serviceController.updateService);
-router.patch(['/api/vendors/:vendorId/services/:serviceId', '/api/vendor/:vendorId/services/:serviceId', '/api/services/:serviceId'], upload.any(), handleMulterError, authenticateToken, requireVendorOwner, serviceController.updateService);
-router.post(['/api/vendors/:vendorId/services/:serviceId', '/api/vendor/:vendorId/services/:serviceId', '/api/services/:serviceId', '/api/services/:serviceId/edit', '/api/services/:serviceId/update'], upload.any(), handleMulterError, authenticateToken, requireVendorOwner, serviceController.updateService);
+router.put(['/api/vendors/:vendorId/services/:serviceId', '/api/vendor/:vendorId/services/:serviceId', '/api/services/:serviceId'], upload.any(), handleMulterError, authenticateToken, requireVendorOwner, validateRequest(updateServiceSchema), serviceController.updateService);
+router.patch(['/api/vendors/:vendorId/services/:serviceId', '/api/vendor/:vendorId/services/:serviceId', '/api/services/:serviceId'], upload.any(), handleMulterError, authenticateToken, requireVendorOwner, validateRequest(updateServiceSchema), serviceController.updateService);
+router.post(['/api/vendors/:vendorId/services/:serviceId', '/api/vendor/:vendorId/services/:serviceId', '/api/services/:serviceId', '/api/services/:serviceId/edit', '/api/services/:serviceId/update'], upload.any(), handleMulterError, authenticateToken, requireVendorOwner, validateRequest(updateServiceSchema), serviceController.updateService);
 
 // Dedicated Service Photo / Image Update Endpoints (Vendor Owner Only)
 router.post(['/api/vendors/:vendorId/services/:serviceId/image', '/api/vendors/:vendorId/services/:serviceId/photo', '/api/services/:serviceId/image', '/api/services/:serviceId/photo'], upload.any(), handleMulterError, authenticateToken, requireVendorOwner, serviceController.updateServiceImage);
@@ -317,7 +322,7 @@ router.post([
   '/api/payments/cashfree/create-order-session',
   '/api/payments/cashfree/create-session',
   '/api/payments/cashfree/create-order'
-], cashfreePaymentController.createOrderPaymentSession);
+], validateRequest(orderPaymentSessionSchema), cashfreePaymentController.createOrderPaymentSession);
 
 router.post([
   '/api/payments/verify',
@@ -325,19 +330,19 @@ router.post([
   '/api/payments/verify-payment',
   '/api/payments/cashfree/verify',
   '/api/payments/cashfree/verify-order'
-], cashfreePaymentController.verifyOrderPayment);
+], validateRequest(verifyPaymentSchema), cashfreePaymentController.verifyOrderPayment);
 
 router.post([
   '/api/payments/pay-vendor-direct',
   '/api/payments/cashfree/pay-vendor-direct',
   '/api/payments/pay-merchant-direct',
   '/api/payments/cashfree/pay-merchant-direct'
-], cashfreePaymentController.payVendorDirect);
+], validateRequest(directPaySchema), cashfreePaymentController.payVendorDirect);
 
 router.post([
   '/api/payments/verify-direct',
   '/api/payments/cashfree/verify-direct'
-], cashfreePaymentController.verifyDirectPayment);
+], validateRequest(verifyPaymentSchema), cashfreePaymentController.verifyDirectPayment);
 
 router.post([
   '/api/payments/confirm-direct-upi',
@@ -435,14 +440,14 @@ router.put(['/api/admin/support/tickets/:ticketId/status', '/api/admin/support/t
 router.post(['/api/admin/support/tickets/:ticketId/attachments', '/api/support/tickets/:ticketId/attachments', '/api/support/tickets/:id/attachments'], authenticateAdminToken, requirePower('SUPPORT'), supportUpload.single('file'), supportController.uploadAttachment);
 
 // ── Resident User Mobile App & Website (user-app - User Only) ────────────────────────
-router.post(['/api/user/tickets', '/api/users/tickets'], authenticateToken, requireUser, supportController.createCustomerTicket);
+router.post(['/api/user/tickets', '/api/users/tickets'], authenticateToken, requireUser, validateRequest(createTicketSchema), supportController.createCustomerTicket);
 router.get(['/api/user/tickets', '/api/users/tickets'], authenticateToken, requireUser, supportController.getUserTickets);
 router.post(['/api/user/tickets/:ticketId/reply', '/api/user/tickets/:id/reply', '/api/users/tickets/:ticketId/reply', '/api/users/tickets/:id/reply'], authenticateToken, requireUser, supportController.userReplyToTicket);
 
 // ── Merchant Vendor Mobile App & Portal (vendor-portal - Vendor Only) ──────────────────
-router.post(['/api/vendor/tickets', '/api/vendors/tickets'], authenticateToken, requireVendor, supportController.createVendorTicket);
+router.post(['/api/vendor/tickets', '/api/vendors/tickets'], authenticateToken, requireVendor, validateRequest(createTicketSchema), supportController.createVendorTicket);
 router.get(['/api/vendor/tickets', '/api/vendors/tickets'], authenticateToken, requireVendor, supportController.getVendorTickets);
-router.post(['/api/merchant/tickets', '/api/merchants/tickets'], authenticateToken, requireVendor, supportController.createVendorTicket);
+router.post(['/api/merchant/tickets', '/api/merchants/tickets'], authenticateToken, requireVendor, validateRequest(createTicketSchema), supportController.createVendorTicket);
 router.get(['/api/merchant/tickets', '/api/merchants/tickets'], authenticateToken, requireVendor, supportController.getVendorTickets);
 router.get(['/api/vendor/:vendorId/purchases', '/api/vendors/:vendorId/purchases', '/api/vendorPanel/:vendorId/purchases', '/api/vendor/:vendorId/my-orders', '/api/vendors/:vendorId/my-orders', '/api/orders/vendor-purchases/:vendorId',
   '/api/merchant/:vendorId/purchases',

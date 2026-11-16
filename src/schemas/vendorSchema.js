@@ -1,40 +1,21 @@
 const z = require('../utils/zod');
+const { createItemSchema, updateItemSchema } = require('./itemSchema');
+const { createServiceSchema, updateServiceSchema } = require('./serviceSchema');
 
-const addItemSchema = {
-  body: z.object({
-    item_name: z.string().trim().min(1, 'Item name is required'),
-    price: z.coerce.number().positive('Item price must be a positive number'),
-    description: z.string().trim().optional(),
-    stock: z.coerce.number().min(0, 'Stock cannot be negative').optional(),
-    category: z.string().trim().optional(),
-    unit: z.string().trim().optional(),
-    is_available: z.coerce.boolean().optional(),
-    image_url: z.string().trim().optional()
-  })
-};
-
-const addServiceSchema = {
-  body: z.object({
-    service_name: z.string().trim().min(1, 'Service name is required'),
-    category: z.string().trim().optional(),
-    price: z.coerce.number().min(0, 'Price must be non-negative').optional(),
-    visiting_charge: z.coerce.number().min(0, 'Visiting charge must be non-negative').optional(),
-    estimated_duration: z.string().trim().optional(),
-    service_location: z.string().trim().optional(),
-    description: z.string().trim().optional(),
-    is_available: z.coerce.boolean().optional(),
-    image_url: z.string().trim().optional()
-  })
-};
+const addItemSchema = createItemSchema;
+const addServiceSchema = createServiceSchema;
 
 const updateSettingsSchema = {
+  params: z.object({
+    vendorId: z.union([z.string(), z.number()]).optional()
+  }).passthrough(),
   body: z.object({
-    store_name: z.string().trim().min(1, 'Store name is required').optional(),
-    vendor_name: z.string().trim().optional(),
-    contact_person: z.string().trim().optional(),
-    merchant_name: z.string().trim().optional(),
-    owner_name: z.string().trim().optional(),
-    email: z.string().trim().optional(),
+    store_name: z.string().trim().min(2, 'Store name must be at least 2 characters').max(100).optional(),
+    vendor_name: z.string().trim().min(2, 'Vendor name must be at least 2 characters').max(100).optional(),
+    contact_person: z.string().trim().max(100).optional(),
+    merchant_name: z.string().trim().max(100).optional(),
+    owner_name: z.string().trim().max(100).optional(),
+    email: z.string().trim().email('Invalid email address format').max(100).optional(),
     logo: z.string().trim().optional(),
     logo_url: z.string().trim().optional(),
     store_logo: z.string().trim().optional(),
@@ -44,69 +25,82 @@ const updateSettingsSchema = {
     photo: z.string().trim().optional(),
     avatar: z.string().trim().optional(),
     avatar_url: z.string().trim().optional(),
-    description: z.string().trim().optional(),
-    phone_number: z.string().trim().optional(),
-    phone: z.string().trim().optional(),
-    whatsapp_number: z.string().trim().optional(),
-    gst_number: z.string().trim().optional(),
-    gstin: z.string().trim().optional(),
-    gst: z.string().trim().optional(),
-    gstNumber: z.string().trim().optional(),
-    pan_number: z.string().trim().optional(),
-    pan: z.string().trim().optional(),
-    panNumber: z.string().trim().optional(),
-    opening_time: z.string().trim().optional(),
-    closing_time: z.string().trim().optional(),
-    working_days: z.string().trim().optional(),
-    business_type: z.string().trim().optional(),
-    category: z.string().trim().optional(),
-    address: z.string().trim().optional(),
-    area: z.string().trim().optional(),
-    city: z.string().trim().optional(),
-    state: z.string().trim().optional(),
-    pincode: z.string().trim().optional(),
-    location: z.string().trim().optional(),
-    shop_number: z.string().trim().optional(),
-    shop_no: z.string().trim().optional(),
-    bank_name: z.string().trim().optional(),
-    account_number: z.string().trim().optional(),
-    bank_account_number: z.string().trim().optional(),
-    ifsc_code: z.string().trim().optional(),
-    ifsc: z.string().trim().optional(),
-    ifscCode: z.string().trim().optional(),
-    account_holder_name: z.string().trim().optional(),
-    upi_id: z.string().trim().optional(),
-    upi: z.string().trim().optional(),
+    description: z.string().trim().max(3000).optional(),
+    phone_number: z.string().trim().max(20).optional(),
+    phone: z.string().trim().max(20).optional(),
+    whatsapp_number: z.string().trim().max(20).optional(),
+    gst_number: z.string().trim().max(20).optional(),
+    gstin: z.string().trim().max(20).optional(),
+    gst: z.string().trim().max(20).optional(),
+    gstNumber: z.string().trim().max(20).optional(),
+    pan_number: z.string().trim().max(15).optional(),
+    pan: z.string().trim().max(15).optional(),
+    panNumber: z.string().trim().max(15).optional(),
+    opening_time: z.string().trim().max(30).optional(),
+    closing_time: z.string().trim().max(30).optional(),
+    working_days: z.string().trim().max(100).optional(),
+    business_type: z.string().trim().max(100).optional(),
+    category: z.string().trim().max(100).optional(),
+    address: z.string().trim().max(1000).optional(),
+    area: z.string().trim().max(150).optional(),
+    city: z.string().trim().max(100).optional(),
+    state: z.string().trim().max(100).optional(),
+    pincode: z.string().trim().max(10).optional(),
+    location: z.string().trim().max(150).optional(),
+    shop_number: z.string().trim().max(100).optional(),
+    shop_no: z.string().trim().max(100).optional(),
+    bank_name: z.string().trim().max(100).optional(),
+    account_number: z.string().trim().max(50).optional(),
+    bank_account_number: z.string().trim().max(50).optional(),
+    ifsc_code: z.string().trim().max(20).optional(),
+    ifsc: z.string().trim().max(20).optional(),
+    ifscCode: z.string().trim().max(20).optional(),
+    account_holder_name: z.string().trim().max(100).optional(),
+    upi_id: z.string().trim().max(100).optional(),
+    upi: z.string().trim().max(100).optional(),
     qr_code: z.string().trim().optional(),
     qr_code_url: z.string().trim().optional(),
     payment_details: z.any().optional(),
     tax_details: z.any().optional(),
     business_details: z.any().optional(),
-    min_order_value: z.coerce.number().min(0).optional(),
-    max_quantity_limit: z.coerce.number().min(1).optional(),
-    delivery_charge: z.coerce.number().min(0).optional(),
-    gst_percentage: z.coerce.number().min(0).optional(),
-    service_charge_percentage: z.coerce.number().min(0).optional(),
+    min_order_value: z.coerce.number()
+      .min(0, 'min_order_value cannot be negative')
+      .maxDigitsBeforeDecimal(6, 'min_order_value cannot exceed 6 digits before decimal')
+      .maxDecimals(2)
+      .max(999999.99)
+      .optional(),
+    max_quantity_limit: z.coerce.number().int().min(1).optional(),
+    delivery_charge: z.coerce.number()
+      .min(0, 'delivery_charge cannot be negative')
+      .maxDigitsBeforeDecimal(5, 'delivery_charge cannot exceed 5 digits before decimal')
+      .maxDecimals(2)
+      .max(99999.99)
+      .optional(),
+    gst_percentage: z.coerce.number().min(0).max(28).optional(),
+    service_charge_percentage: z.coerce.number().min(0).max(100).optional(),
     vendor_type: z.enum(['product', 'service']).optional(),
     location_type: z.enum(['society', 'area_sector']).optional(),
-    is_global_coverage: z.boolean().optional(),
-    delivery_radius_km: z.coerce.number().min(0).optional(),
+    is_global_coverage: z.coerce.boolean().optional(),
+    delivery_radius_km: z.coerce.number().min(0).max(1000).optional(),
     selected_zones: z.array(z.any()).optional()
   }).passthrough()
 };
 
 const updateCoverageSchema = {
+  params: z.object({
+    vendorId: z.union([z.string(), z.number()]).optional()
+  }).passthrough(),
   body: z.object({
     location_type: z.enum(['society', 'area_sector']).optional(),
-    is_global_coverage: z.boolean().optional(),
-    delivery_radius_km: z.coerce.number().min(0).optional(),
+    is_global_coverage: z.coerce.boolean().optional(),
+    delivery_radius_km: z.coerce.number().min(0).max(1000).optional(),
     selected_zones: z.array(z.object({
       zone_id: z.union([z.string(), z.number()]).optional(),
       name: z.string().trim().min(1),
       type: z.enum(['society', 'sector', 'sub_area']).optional(),
-      is_active: z.boolean().default(true)
+      is_active: z.coerce.boolean().default(true)
     })).optional()
-  })
+  }).passthrough()
 };
 
 const checkCoverageSchema = {
@@ -116,32 +110,15 @@ const checkCoverageSchema = {
     radius_km: z.coerce.number().min(0.1).default(3),
     sector: z.string().trim().optional(),
     location_type: z.enum(['society', 'area_sector']).optional()
-  })
-};
-
-const serviceEnquirySchema = {
-  body: z.object({
-    vendor_id: z.union([z.string(), z.number()]),
-    name: z.string().trim().min(1, 'Name is required').optional(),
-    user_name: z.string().trim().min(1, 'User name is required').optional(),
-    phone: z.string().trim().min(10, 'Valid phone number is required').optional(),
-    user_phone: z.string().trim().min(10, 'Valid phone number is required').optional(),
-    user_id: z.string().trim().optional(),
-    society_id: z.union([z.string(), z.number()]).optional(),
-    society_name: z.string().trim().optional(),
-    sector: z.string().trim().optional(),
-    service_type: z.string().trim().optional(),
-    preferred_time: z.string().trim().optional(),
-    description: z.string().trim().optional(),
-    issue_photos: z.array(z.string()).optional()
-  })
+  }).passthrough()
 };
 
 module.exports = {
   addItemSchema,
+  updateItemSchema,
   addServiceSchema,
+  updateServiceSchema,
   updateSettingsSchema,
   updateCoverageSchema,
-  checkCoverageSchema,
-  serviceEnquirySchema
+  checkCoverageSchema
 };

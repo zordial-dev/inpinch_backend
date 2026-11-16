@@ -49,7 +49,9 @@ async function createOrderPaymentSession(req, res) {
 
       if (orderRes.rows && orderRes.rows.length > 0) {
         const ord = orderRes.rows[0];
-        targetAmount = targetAmount > 0 ? targetAmount : Number(ord.total_amount || 0);
+        // Authoritative order total strictly retrieved from database
+        const dbOrderTotal = Number(ord.total_amount || 0);
+        targetAmount = dbOrderTotal > 0 ? dbOrderTotal : targetAmount;
         targetVendorId = targetVendorId || ord.vendor_id;
         targetCustomerName = targetCustomerName || ord.customer_name || 'Resident Customer';
         targetCustomerPhone = targetCustomerPhone || ord.customer_phone;
@@ -365,10 +367,25 @@ async function payVendorDirect(req, res) {
     }
 
     const numAmount = Number(amount);
-    if (isNaN(numAmount) || numAmount <= 0) {
+    if (isNaN(numAmount) || !Number.isFinite(numAmount) || numAmount <= 0) {
       return res.status(400).json({
         success: false,
         error: 'Invalid amount. Direct payment amount must be greater than 0.'
+      });
+    }
+
+    if (numAmount > 999999.99) {
+      return res.status(400).json({
+        success: false,
+        error: 'Direct payment amount cannot exceed ₹999,999.99 (max 6 digits before decimal).'
+      });
+    }
+
+    const amountParts = String(amount).trim().split('.');
+    if (amountParts[1] && amountParts[1].length > 2) {
+      return res.status(400).json({
+        success: false,
+        error: 'Direct payment amount cannot have more than 2 decimal places.'
       });
     }
 

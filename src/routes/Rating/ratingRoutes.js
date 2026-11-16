@@ -3,16 +3,18 @@ const router = express.Router();
 const ratingController = require('../../controllers/Rating/ratingController');
 const { authenticateToken, requireUser, requireVendor, requireVendorOwner } = require('../../middleware/auth');
 const { authenticateAdminToken } = require('../../middleware/adminAuth');
+const { validateRequest } = require('../../middleware/validate');
+const { submitRatingSchema, replyRatingSchema } = require('../../schemas/ratingSchema');
 
 // ── Customer Rating & Review Submission Endpoints (User Only) ────────
 // Submit Rating & Review
-router.post('/api/vendorPanel/:vendorId/ratings', authenticateToken, requireUser, ratingController.submitRating);
-router.post('/api/vendors/:vendorId/ratings', authenticateToken, requireUser, ratingController.submitRating);
-router.post('/api/vendor/:vendorId/ratings', authenticateToken, requireUser, ratingController.submitRating);
-router.post('/api/stores/:vendorId/ratings', authenticateToken, requireUser, ratingController.submitRating);
-router.post('/api/ratings', authenticateToken, requireUser, ratingController.submitRating);
-router.post('/vendors/:vendorId/ratings', authenticateToken, requireUser, ratingController.submitRating);
-router.post('/ratings', authenticateToken, requireUser, ratingController.submitRating);
+router.post('/api/vendorPanel/:vendorId/ratings', authenticateToken, requireUser, validateRequest(submitRatingSchema), ratingController.submitRating);
+router.post('/api/vendors/:vendorId/ratings', authenticateToken, requireUser, validateRequest(submitRatingSchema), ratingController.submitRating);
+router.post('/api/vendor/:vendorId/ratings', authenticateToken, requireUser, validateRequest(submitRatingSchema), ratingController.submitRating);
+router.post('/api/stores/:vendorId/ratings', authenticateToken, requireUser, validateRequest(submitRatingSchema), ratingController.submitRating);
+router.post('/api/ratings', authenticateToken, requireUser, validateRequest(submitRatingSchema), ratingController.submitRating);
+router.post('/vendors/:vendorId/ratings', authenticateToken, requireUser, validateRequest(submitRatingSchema), ratingController.submitRating);
+router.post('/ratings', authenticateToken, requireUser, validateRequest(submitRatingSchema), ratingController.submitRating);
 
 // Edit Rating & Review (User Only)
 router.put('/api/ratings/:ratingId', authenticateToken, requireUser, ratingController.editReview);
@@ -58,11 +60,11 @@ router.get('/api/vendor/:vendorId/reviews', authenticateToken, requireVendorOwne
 router.get('/vendor/ratings', authenticateToken, requireVendor, ratingController.getVendorSelfRatings);
 router.get('/vendor/reviews', authenticateToken, requireVendor, ratingController.getVendorSelfRatings);
 
-router.post('/api/vendor/ratings/:ratingId/reply', authenticateToken, requireVendor, ratingController.replyToRating);
-router.post('/api/vendor/reviews/:ratingId/reply', authenticateToken, requireVendor, ratingController.replyToRating);
-router.post('/api/vendorPanel/ratings/:ratingId/reply', authenticateToken, requireVendor, ratingController.replyToRating);
-router.post('/api/vendorPanel/reviews/:ratingId/reply', authenticateToken, requireVendor, ratingController.replyToRating);
-router.post('/vendor/ratings/:ratingId/reply', authenticateToken, requireVendor, ratingController.replyToRating);
+router.post('/api/vendor/ratings/:ratingId/reply', authenticateToken, requireVendor, validateRequest(replyRatingSchema), ratingController.replyToRating);
+router.post('/api/vendor/reviews/:ratingId/reply', authenticateToken, requireVendor, validateRequest(replyRatingSchema), ratingController.replyToRating);
+router.post('/api/vendorPanel/ratings/:ratingId/reply', authenticateToken, requireVendor, validateRequest(replyRatingSchema), ratingController.replyToRating);
+router.post('/api/vendorPanel/reviews/:ratingId/reply', authenticateToken, requireVendor, validateRequest(replyRatingSchema), ratingController.replyToRating);
+router.post('/vendor/ratings/:ratingId/reply', authenticateToken, requireVendor, validateRequest(replyRatingSchema), ratingController.replyToRating);
 
 // ── Admin Panel Rating & Moderation Endpoints (Admin Only) ────────
 router.get('/api/admin/vendor-ratings', authenticateAdminToken, ratingController.getAllAdminRatings);

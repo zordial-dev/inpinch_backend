@@ -8,6 +8,9 @@ const serviceController = require('../../controllers/Vendor/serviceController');
 const { authenticateToken, requireVendor, requireVendorOwner, verifyMerchantToken } = require('../../middleware/auth');
 const { validateRequest } = require('../../middleware/validate');
 const { addItemSchema, updateSettingsSchema } = require('../../schemas/vendorSchema');
+const { createItemSchema, updateItemSchema, updateItemStockSchema } = require('../../schemas/itemSchema');
+const { createServiceSchema: addServiceSchema, updateServiceSchema } = require('../../schemas/serviceSchema');
+const { updateCoverageSchema } = require('../../schemas/vendorSchema');
 
 // Allowed MIME types
 const ALLOWED_MIME_TYPES = [
@@ -171,8 +174,8 @@ router.post(['/items/upload-image', '/products/upload-image', '/:vendorId/items/
 router.post(['/:vendorId/items', '/:vendorId/products'], upload.any(), handleMulterError, authenticateToken, requireVendorOwner, validateRequest(addItemSchema), vendorPanelController.addItem);
 
 // PUT/PATCH /api/vendorPanel/:vendorId/items/:itemId & /products/:itemId
-router.put(['/:vendorId/items/:itemId', '/:vendorId/products/:itemId'], upload.any(), handleMulterError, authenticateToken, requireVendorOwner, vendorPanelController.updateItem);
-router.patch(['/:vendorId/items/:itemId', '/:vendorId/products/:itemId'], upload.any(), handleMulterError, authenticateToken, requireVendorOwner, vendorPanelController.updateItem);
+router.put(['/:vendorId/items/:itemId', '/:vendorId/products/:itemId'], upload.any(), handleMulterError, authenticateToken, requireVendorOwner, validateRequest(updateItemSchema), vendorPanelController.updateItem);
+router.patch(['/:vendorId/items/:itemId', '/:vendorId/products/:itemId'], upload.any(), handleMulterError, authenticateToken, requireVendorOwner, validateRequest(updateItemSchema), vendorPanelController.updateItem);
 
 // Dedicated Photo / Image endpoints for items & products
 router.post(['/:vendorId/items/:itemId/image', '/:vendorId/products/:itemId/image'], upload.any(), handleMulterError, authenticateToken, requireVendorOwner, vendorPanelController.updateItemImage);
@@ -184,8 +187,8 @@ router.patch(['/:vendorId/items/:itemId/photo', '/:vendorId/products/:itemId/pho
 
 // Toggle Item Availability Endpoints (Vendor Owner Only)
 router.patch(['/items/:itemId/availability', '/products/:itemId/availability', '/:vendorId/items/:itemId/availability', '/:vendorId/products/:itemId/availability'], authenticateToken, requireVendorOwner, vendorPanelController.toggleAvailability);
-router.patch(['/:vendorId/items/:itemId/stock', '/:vendorId/products/:itemId/stock', '/items/:itemId/stock', '/products/:itemId/stock'], upload.any(), handleMulterError, authenticateToken, requireVendorOwner, vendorPanelController.updateItemStock);
-router.put(['/:vendorId/items/:itemId/stock', '/:vendorId/products/:itemId/stock', '/items/:itemId/stock', '/products/:itemId/stock'], upload.any(), handleMulterError, authenticateToken, requireVendorOwner, vendorPanelController.updateItemStock);
+router.patch(['/:vendorId/items/:itemId/stock', '/:vendorId/products/:itemId/stock', '/items/:itemId/stock', '/products/:itemId/stock'], upload.any(), handleMulterError, authenticateToken, requireVendorOwner, validateRequest(updateItemStockSchema), vendorPanelController.updateItemStock);
+router.put(['/:vendorId/items/:itemId/stock', '/:vendorId/products/:itemId/stock', '/items/:itemId/stock', '/products/:itemId/stock'], upload.any(), handleMulterError, authenticateToken, requireVendorOwner, validateRequest(updateItemStockSchema), vendorPanelController.updateItemStock);
 router.put(['/items/:itemId/availability', '/products/:itemId/availability', '/:vendorId/items/:itemId/availability', '/:vendorId/products/:itemId/availability'], authenticateToken, requireVendorOwner, vendorPanelController.toggleAvailability);
 
 // DELETE /api/vendorPanel/:vendorId/items/:itemId & /products/:itemId
@@ -193,12 +196,12 @@ router.delete(['/:vendorId/items/:itemId', '/:vendorId/products/:itemId'], authe
 
 // ── Service Vendor Services Catalog Endpoints ────────────────────
 // POST /api/vendorPanel/:vendorId/services (Supports multipart/form-data camera/gallery uploads and JSON)
-router.post('/:vendorId/services', upload.any(), handleMulterError, authenticateToken, requireVendorOwner, serviceController.addService);
+router.post('/:vendorId/services', upload.any(), handleMulterError, authenticateToken, requireVendorOwner, validateRequest(addServiceSchema), serviceController.addService);
 router.get('/:vendorId/services', authenticateToken, requireVendorOwner, serviceController.getVendorServices);
 router.get('/:vendorId/services/:serviceId', authenticateToken, requireVendorOwner, serviceController.getServiceById);
-router.put('/:vendorId/services/:serviceId', upload.any(), handleMulterError, authenticateToken, requireVendorOwner, serviceController.updateService);
-router.patch('/:vendorId/services/:serviceId', upload.any(), handleMulterError, authenticateToken, requireVendorOwner, serviceController.updateService);
-router.post(['/:vendorId/services/:serviceId', '/:vendorId/services/:serviceId/edit', '/:vendorId/services/:serviceId/update'], upload.any(), handleMulterError, authenticateToken, requireVendorOwner, serviceController.updateService);
+router.put('/:vendorId/services/:serviceId', upload.any(), handleMulterError, authenticateToken, requireVendorOwner, validateRequest(updateServiceSchema), serviceController.updateService);
+router.patch('/:vendorId/services/:serviceId', upload.any(), handleMulterError, authenticateToken, requireVendorOwner, validateRequest(updateServiceSchema), serviceController.updateService);
+router.post(['/:vendorId/services/:serviceId', '/:vendorId/services/:serviceId/edit', '/:vendorId/services/:serviceId/update'], upload.any(), handleMulterError, authenticateToken, requireVendorOwner, validateRequest(updateServiceSchema), serviceController.updateService);
 
 // Dedicated Photo / Image endpoints for services
 router.post(['/:vendorId/services/:serviceId/image', '/:vendorId/services/:serviceId/photo'], upload.any(), handleMulterError, authenticateToken, requireVendorOwner, serviceController.updateServiceImage);
@@ -238,7 +241,7 @@ router.post(['/:vendorId/settings', '/:vendorId/profile', '/:vendorId'], upload.
 router.patch(['/:vendorId/settings', '/:vendorId/profile', '/:vendorId'], upload.any(), handleMulterError, authenticateToken, requireVendorOwner, validateRequest(updateSettingsSchema), vendorPanelController.updateSettings);
 
 // PUT /api/vendorPanel/:vendorId/coverage
-router.put('/:vendorId/coverage', authenticateToken, requireVendorOwner, vendorPanelController.updateVendorCoverage);
+router.put('/:vendorId/coverage', authenticateToken, requireVendorOwner, validateRequest(updateCoverageSchema), vendorPanelController.updateVendorCoverage);
 
 // DELETE /api/vendorPanel/:vendorId, /:vendorId/account, or /account - Delete vendor store & account
 router.delete(['/:vendorId', '/:vendorId/store', '/:vendorId/account', '/account'], authenticateToken, requireVendorOwner, vendorPanelController.deleteStore);

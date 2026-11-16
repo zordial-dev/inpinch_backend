@@ -3,13 +3,15 @@
 const express = require('express');
 const router = express.Router();
 const publicDiscoveryController = require('../../controllers/Storefront/publicDiscoveryController');
+const { validateRequest } = require('../../middleware/validate');
+const { citySearchSchema, discoverQuerySchema } = require('../../schemas/cityDiscoverySchema');
 
 // ── City Selection Endpoints ─────────────────────────────────
 // GET /api/public/cities - Complete list of Indian cities across all 28 states & 8 UTs
 router.get('/cities', publicDiscoveryController.getCities);
 
 // GET /api/public/cities/search - Autocomplete city search
-router.get('/cities/search', publicDiscoveryController.searchCities);
+router.get('/cities/search', validateRequest(citySearchSchema), publicDiscoveryController.searchCities);
 
 // GET /api/public/cities/:cityId/categories - Dynamic categories with active listings in this city
 router.get('/cities/:cityId/categories', publicDiscoveryController.getCityAvailableCategories);
@@ -29,7 +31,7 @@ router.get('/categories/:categoryId/subcategories', publicDiscoveryController.ge
 
 // ── Unified Discovery Endpoints ──────────────────────────────
 // GET /api/public/discover - Search and filter products & services by city, category, subcategory, keyword
-router.get('/discover', publicDiscoveryController.discover);
+router.get('/discover', validateRequest(discoverQuerySchema), publicDiscoveryController.discover);
 
 // ── Public Detail Endpoints ──────────────────────────────────
 // GET /api/public/products/:id - Product details with merchant and WhatsApp inquiry

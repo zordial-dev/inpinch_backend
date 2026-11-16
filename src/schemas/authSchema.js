@@ -1,114 +1,96 @@
 const z = require('../utils/zod');
 
+function normalizeAuthPayload(data = {}) {
+  const normalized = { ...data };
+
+  if (normalized.merchant_name !== undefined && normalized.vendor_name === undefined) normalized.vendor_name = normalized.merchant_name;
+  if (normalized.owner_name !== undefined && normalized.vendor_name === undefined) normalized.vendor_name = normalized.owner_name;
+  if (normalized.name !== undefined && normalized.vendor_name === undefined) normalized.vendor_name = normalized.name;
+
+  if (normalized.shop_name !== undefined && normalized.store_name === undefined) normalized.store_name = normalized.shop_name;
+  if (normalized.business_name !== undefined && normalized.store_name === undefined) normalized.store_name = normalized.business_name;
+
+  if (normalized.mobile !== undefined && normalized.phone_number === undefined) normalized.phone_number = normalized.mobile;
+  if (normalized.phone !== undefined && normalized.phone_number === undefined) normalized.phone_number = normalized.phone;
+  if (normalized.mobile_number !== undefined && normalized.phone_number === undefined) normalized.phone_number = normalized.mobile_number;
+
+  if (normalized.shop_address !== undefined && normalized.address === undefined) normalized.address = normalized.shop_address;
+  if (normalized.full_address !== undefined && normalized.address === undefined) normalized.address = normalized.full_address;
+
+  if (normalized.pin_code !== undefined && normalized.pincode === undefined) normalized.pincode = normalized.pin_code;
+  if (normalized.pinCode !== undefined && normalized.pincode === undefined) normalized.pincode = normalized.pinCode;
+
+  if (normalized.gst_number !== undefined && normalized.gstin === undefined) normalized.gstin = normalized.gst_number;
+  if (normalized.pan_number !== undefined && normalized.pan === undefined) normalized.pan = normalized.pan_number;
+
+  return normalized;
+}
+
 const registerSchema = {
   body: z.object({
-    society_id: z.union([z.number(), z.string()]).optional(),
-    society: z.union([z.number(), z.string()]).optional(),
-    society_name: z.string().optional(),
-    societyName: z.string().optional(),
-    vendor_name: z.string().optional(),
-    merchant_name: z.string().optional(),
-    merchantName: z.string().optional(),
-    owner_name: z.string().optional(),
-    ownerName: z.string().optional(),
-    vendorName: z.string().optional(),
-    name: z.string().optional(),
-    owner: z.string().optional(),
-    email: z.string().trim().optional(),
-    email_address: z.string().optional(),
-    emailAddress: z.string().optional(),
-    password: z.string().optional(),
-    pass: z.string().optional(),
-    create_password: z.string().optional(),
-    store_name: z.string().optional(),
-    shop_name: z.string().optional(),
-    business_name: z.string().optional(),
-    storeName: z.string().optional(),
-    shopName: z.string().optional(),
-    businessName: z.string().optional(),
-    gst_number: z.string().optional(),
-    gstNumber: z.string().optional(),
-    gst: z.string().optional(),
-    gstin: z.string().optional(),
-    pan_number: z.string().optional(),
-    pan: z.string().optional(),
-    panNumber: z.string().optional(),
-    phone_number: z.string().optional(),
-    mobile_number: z.string().optional(),
-    mobile: z.string().optional(),
-    phone: z.string().optional(),
-    phoneNumber: z.string().optional(),
-    mobileNumber: z.string().optional(),
-    category: z.string().optional(),
-    business_category: z.string().optional(),
-    businessCategory: z.string().optional(),
-    address: z.string().optional(),
-    shop_address: z.string().optional(),
-    shopAddress: z.string().optional(),
-    shop_number: z.string().trim().max(100, 'Shop number must be under 100 characters').optional(),
-    shop_no: z.string().trim().max(100, 'Shop number must be under 100 characters').optional(),
-    shopNumber: z.string().trim().max(100, 'Shop number must be under 100 characters').optional(),
-    city: z.string().optional(),
-    state: z.string().optional(),
+    vendor_name: z.string().trim().max(100, 'Vendor name must not exceed 100 characters').optional(),
+    store_name: z.string().trim().max(100, 'Store name must not exceed 100 characters').optional(),
+    email: z.string().trim().max(100, 'Email must not exceed 100 characters').optional(),
+    password: z.string().max(128, 'Password must not exceed 128 characters').optional(),
+    phone_number: z.string().trim().max(20, 'Phone number must not exceed 20 characters').optional(),
+    whatsapp_number: z.string().trim().max(20, 'WhatsApp number must not exceed 20 characters').optional(),
+    address: z.string().trim().max(1000, 'Address must not exceed 1000 characters').optional(),
+    area: z.string().trim().max(150, 'Area must not exceed 150 characters').optional(),
+    city: z.string().trim().max(100, 'City must not exceed 100 characters').optional(),
+    state: z.string().trim().max(100, 'State must not exceed 100 characters').optional(),
     pincode: z.union([z.number(), z.string()]).optional(),
-    pin_code: z.union([z.number(), z.string()]).optional(),
-    pinCode: z.union([z.number(), z.string()]).optional(),
+    shop_number: z.string().trim().max(100, 'Shop number must not exceed 100 characters').optional(),
+    gstin: z.string().trim().max(20, 'GSTIN must not exceed 20 characters').optional(),
+    pan: z.string().trim().max(15, 'PAN must not exceed 15 characters').optional(),
     account_number: z.union([z.number(), z.string()]).optional(),
-    bank_account_number: z.union([z.number(), z.string()]).optional(),
-    accountNumber: z.union([z.number(), z.string()]).optional(),
-    ifsc_code: z.string().optional(),
-    ifsc: z.string().optional(),
-    ifscCode: z.string().optional(),
-    bank_name: z.string().optional(),
-    account_holder_name: z.string().optional(),
-    payment_method: z.string().optional(),
-    transaction_id: z.string().optional()
-  }).passthrough()
+    ifsc_code: z.string().trim().max(20, 'IFSC code must not exceed 20 characters').optional(),
+    bank_name: z.string().trim().max(100, 'Bank name must not exceed 100 characters').optional(),
+    account_holder_name: z.string().trim().max(100, 'Account holder name must not exceed 100 characters').optional(),
+    society_id: z.union([z.number(), z.string()]).optional()
+  }).passthrough().preprocess(normalizeAuthPayload)
 };
 
 const loginSchema = {
   body: z.object({
-    email: z.string().optional(),
-    phone: z.string().optional(),
-    mobile: z.string().optional(),
-    identifier: z.string().optional(),
-    password: z.string().optional(),
-    otp: z.string().optional()
+    email: z.string().trim().max(100).optional(),
+    phone: z.string().trim().max(20).optional(),
+    mobile: z.string().trim().max(20).optional(),
+    identifier: z.string().trim().max(100).optional(),
+    password: z.string().max(128).optional(),
+    otp: z.string().trim().max(10).optional()
   }).passthrough()
 };
 
 const forgotPasswordSchema = {
   body: z.object({
-    email: z.string().trim().optional(),
-    phone: z.string().trim().optional(),
-    mobile: z.string().trim().optional(),
-    identifier: z.string().trim().optional()
+    email: z.string().trim().max(100).optional(),
+    phone: z.string().trim().max(20).optional(),
+    mobile: z.string().trim().max(20).optional(),
+    identifier: z.string().trim().max(100).optional()
   }).passthrough()
 };
 
 const verifyOtpSchema = {
   body: z.object({
-    email: z.string().trim().optional(),
-    phone: z.string().trim().optional(),
-    mobile: z.string().trim().optional(),
-    identifier: z.string().trim().optional(),
-    otp: z.string().trim().optional(),
-    firebase_token: z.string().trim().optional(),
-    idToken: z.string().trim().optional()
+    email: z.string().trim().max(100).optional(),
+    phone: z.string().trim().max(20).optional(),
+    mobile: z.string().trim().max(20).optional(),
+    identifier: z.string().trim().max(100).optional(),
+    otp: z.string().trim().max(10).optional(),
+    verification_id: z.string().trim().max(200).optional(),
+    verificationId: z.string().trim().max(200).optional()
   }).passthrough()
 };
 
 const resetPasswordSchema = {
   body: z.object({
-    email: z.string().trim().optional(),
-    phone: z.string().trim().optional(),
-    mobile: z.string().trim().optional(),
-    identifier: z.string().trim().optional(),
-    otp: z.string().trim().optional(),
-    firebase_token: z.string().trim().optional(),
-    idToken: z.string().trim().optional(),
-    newPassword: z.string().optional(),
-    new_password: z.string().optional()
+    email: z.string().trim().max(100).optional(),
+    phone: z.string().trim().max(20).optional(),
+    mobile: z.string().trim().max(20).optional(),
+    identifier: z.string().trim().max(100).optional(),
+    otp: z.string().trim().max(10).optional(),
+    newPassword: z.string().min(6).max(128).optional(),
+    new_password: z.string().min(6).max(128).optional()
   }).passthrough()
 };
 
@@ -117,5 +99,6 @@ module.exports = {
   loginSchema,
   forgotPasswordSchema,
   verifyOtpSchema,
-  resetPasswordSchema
+  resetPasswordSchema,
+  normalizeAuthPayload
 };
