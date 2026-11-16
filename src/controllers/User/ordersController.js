@@ -374,7 +374,7 @@ async function createOrder(req, res) {
     // Enforce vendor WhatsApp / phone contact for WhatsApp order placement:
     // If no valid WhatsApp or phone contact is configured, reject immediately with clear error without creating an order.
     const vCheck = await query(
-      `SELECT vendor_id, store_name, vendor_name, phone_number, whatsapp_number, status FROM vendors WHERE vendor_id = ?`,
+      `SELECT vendor_id, store_name, vendor_name, phone_number, whatsapp_number, status, delivery_charge, min_order_value FROM vendors WHERE vendor_id = ?`,
       [vendor_id]
     );
     if (!vCheck.rows || vCheck.rows.length === 0) {
@@ -480,11 +480,9 @@ async function createOrder(req, res) {
         });
       }
 
-      let itemPrice = Number(item.price || item.unit_price || item.unitPrice);
-      if (isNaN(itemPrice) || itemPrice <= 0) {
-        itemPrice = Number(dbItem.price) || 0;
-      }
-      const itemName = item.item_name || item.itemName || item.name || dbItem.item_name || 'Item';
+      // Authoritative database price strictly enforced from store catalog
+      const itemPrice = Math.round((Number(dbItem.price) || 0) * 100) / 100;
+      const itemName = dbItem.item_name || item.item_name || item.itemName || item.name || 'Item';
 
       populatedItems.push({
         item_id: Number(dbItem.item_id),
@@ -499,7 +497,13 @@ async function createOrder(req, res) {
       subtotal += itemPrice * itemQty;
     }
 
-    const numTotal = Number(total_amount) ? Number(total_amount) : subtotal;
+    // Calculate authoritative total from database prices and delivery charge (never trust client total)
+    const authoritativeSubtotal = Math.round(subtotal * 100) / 100;
+    let deliveryCharge = 0;
+    if (vendorRecord && vendorRecord.delivery_charge !== undefined && vendorRecord.delivery_charge !== null) {
+      deliveryCharge = Math.max(0, parseFloat(vendorRecord.delivery_charge) || 0);
+    }
+    const numTotal = Math.round((authoritativeSubtotal + deliveryCharge) * 100) / 100;
 
     // Resolve customer name properly without defaulting to Rahul Sharma
     const rawCustomerName = req.body.customer_name || req.body.customerName || req.body.name || req.body.user_name || req.body.userName;

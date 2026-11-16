@@ -4,6 +4,8 @@ const usersController = require('../../controllers/User/usersController');
 const otpController = require('../../controllers/otpController');
 
 const { authenticateToken, requireUser, requireUserOwner } = require('../../middleware/auth');
+const { validateRequest } = require('../../middleware/validate');
+const { registerUserSchema, updateProfileSchema } = require('../../schemas/userSchema');
 const ratingController = require('../../controllers/Rating/ratingController');
 
 // Middleware: force role='user' on user-scoped OTP routes so the guard always checks only the users table
@@ -32,7 +34,7 @@ router.post(['/check-account', '/check-exists', '/check-user', '/check-phone'], 
 router.post('/login', usersController.loginUser);
 
 // B2. Resident User Registration
-router.post('/register', usersController.registerUser);
+router.post('/register', validateRequest(registerUserSchema), usersController.registerUser);
 
 // B2.1 Fetch Logged-In Resident User Profile & Status Check (User Only)
 router.get('/status', authenticateToken, requireUser, usersController.getUserStatus);
@@ -45,13 +47,13 @@ router.get('/strikes/:userId', authenticateToken, requireUserOwner, usersControl
 router.get('/:userId/strikes', authenticateToken, requireUserOwner, usersController.getUserStrikes);
 
 // B2.1 Update Resident User Profile & Address (User Only)
-router.put('/profile', authenticateToken, requireUser, usersController.updateUserProfile);
-router.patch('/profile', authenticateToken, requireUser, usersController.updateUserProfile);
-router.put('/address', authenticateToken, requireUser, usersController.updateUserProfile);
-router.post('/address', authenticateToken, requireUser, usersController.updateUserProfile);
-router.put('/me', authenticateToken, requireUser, usersController.updateUserProfile);
-router.put('/:userId', authenticateToken, requireUserOwner, usersController.updateUserProfile);
-router.put('/:userId/address', authenticateToken, requireUserOwner, usersController.updateUserProfile);
+router.put('/profile', authenticateToken, requireUser, validateRequest(updateProfileSchema), usersController.updateUserProfile);
+router.patch('/profile', authenticateToken, requireUser, validateRequest(updateProfileSchema), usersController.updateUserProfile);
+router.put('/address', authenticateToken, requireUser, validateRequest(updateProfileSchema), usersController.updateUserProfile);
+router.post('/address', authenticateToken, requireUser, validateRequest(updateProfileSchema), usersController.updateUserProfile);
+router.put('/me', authenticateToken, requireUser, validateRequest(updateProfileSchema), usersController.updateUserProfile);
+router.put('/:userId', authenticateToken, requireUserOwner, validateRequest(updateProfileSchema), usersController.updateUserProfile);
+router.put('/:userId/address', authenticateToken, requireUserOwner, validateRequest(updateProfileSchema), usersController.updateUserProfile);
 
 // B2.2 Delete Resident User Account (User Only)
 router.delete('/profile', authenticateToken, requireUser, usersController.deleteAccount);

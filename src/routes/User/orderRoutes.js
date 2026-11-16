@@ -3,6 +3,8 @@ const router = express.Router();
 const ordersController = require('../../controllers/User/ordersController');
 const cartController = require('../../controllers/User/cartController');
 const { authenticateToken, requireRole, requireUser, requireUserOwner, requireVendorOwner, requireAuth } = require('../../middleware/auth');
+const { validateRequest } = require('../../middleware/validate');
+const { cartAddSchema, createOrderSchema, updateOrderStatusSchema } = require('../../schemas/orderSchema');
 
 // Guard: Only vendors and administrators can alter order progress pipeline
 const requireVendorOrAdmin = requireRole('vendor', 'merchant', 'admin', 'super_admin', 'superadmin', 'sub_admin');
@@ -23,7 +25,7 @@ router.get('/merchant/:vendorId', authenticateToken, requireVendorOwner, ordersC
 router.get('/merchant/:merchantId', authenticateToken, requireVendorOwner, ordersController.getVendorOrders);
 
 // Cart Management Endpoints (User Only - requires authentication)
-router.post(['/cart/add', '/cart', '/cart/items', '/cart/item'], authenticateToken, requireUser, cartController.addToCart);
+router.post(['/cart/add', '/cart', '/cart/items', '/cart/item'], authenticateToken, requireUser, validateRequest(cartAddSchema), cartController.addToCart);
 router.get(['/cart', '/cart/items'], authenticateToken, requireUser, cartController.getCart);
 
 // Validate Cart Stock & Availability before checkout (Public / Cart Check)
@@ -35,8 +37,8 @@ router.get('/payment-eligibility', ordersController.getPaymentEligibility);
 router.post('/payment-eligibility', ordersController.getPaymentEligibility);
 
 // D3. Create New Order (User Only - redirects/provides WhatsApp URL)
-router.post('/', authenticateToken, requireUser, ordersController.createOrder);
-router.post('/checkout', authenticateToken, requireUser, ordersController.createOrder);
+router.post('/', authenticateToken, requireUser, validateRequest(createOrderSchema), ordersController.createOrder);
+router.post('/checkout', authenticateToken, requireUser, validateRequest(createOrderSchema), ordersController.createOrder);
 
 // Dedicated WhatsApp Order Redirect Endpoints
 router.get('/:orderId/whatsapp', ordersController.redirectToWhatsAppOrder);
@@ -44,15 +46,15 @@ router.get('/:orderId/whatsapp-redirect', ordersController.redirectToWhatsAppOrd
 router.get('/:orderId/redirect', ordersController.redirectToWhatsAppOrder);
 
 // D4. Update Order Status Pipeline (Restricted to Vendors and Admins)
-router.put('/:id/status', authenticateToken, requireVendorOrAdmin, ordersController.updateOrderStatus);
-router.post('/:id/status', authenticateToken, requireVendorOrAdmin, ordersController.updateOrderStatus);
-router.patch('/:id/status', authenticateToken, requireVendorOrAdmin, ordersController.updateOrderStatus);
-router.put('/vendor/:vendorId/orders/:id/status', authenticateToken, requireVendorOwner, ordersController.updateOrderStatus);
-router.post('/vendor/:vendorId/orders/:id/status', authenticateToken, requireVendorOwner, ordersController.updateOrderStatus);
-router.patch('/vendor/:vendorId/orders/:id/status', authenticateToken, requireVendorOwner, ordersController.updateOrderStatus);
-router.put('/:vendorId/orders/:id/status', authenticateToken, requireVendorOwner, ordersController.updateOrderStatus);
-router.post('/:vendorId/orders/:id/status', authenticateToken, requireVendorOwner, ordersController.updateOrderStatus);
-router.patch('/:vendorId/orders/:id/status', authenticateToken, requireVendorOwner, ordersController.updateOrderStatus);
+router.put('/:id/status', authenticateToken, requireVendorOrAdmin, validateRequest(updateOrderStatusSchema), ordersController.updateOrderStatus);
+router.post('/:id/status', authenticateToken, requireVendorOrAdmin, validateRequest(updateOrderStatusSchema), ordersController.updateOrderStatus);
+router.patch('/:id/status', authenticateToken, requireVendorOrAdmin, validateRequest(updateOrderStatusSchema), ordersController.updateOrderStatus);
+router.put('/vendor/:vendorId/orders/:id/status', authenticateToken, requireVendorOwner, validateRequest(updateOrderStatusSchema), ordersController.updateOrderStatus);
+router.post('/vendor/:vendorId/orders/:id/status', authenticateToken, requireVendorOwner, validateRequest(updateOrderStatusSchema), ordersController.updateOrderStatus);
+router.patch('/vendor/:vendorId/orders/:id/status', authenticateToken, requireVendorOwner, validateRequest(updateOrderStatusSchema), ordersController.updateOrderStatus);
+router.put('/:vendorId/orders/:id/status', authenticateToken, requireVendorOwner, validateRequest(updateOrderStatusSchema), ordersController.updateOrderStatus);
+router.post('/:vendorId/orders/:id/status', authenticateToken, requireVendorOwner, validateRequest(updateOrderStatusSchema), ordersController.updateOrderStatus);
+router.patch('/:vendorId/orders/:id/status', authenticateToken, requireVendorOwner, validateRequest(updateOrderStatusSchema), ordersController.updateOrderStatus);
 router.put('/merchant/:vendorId/orders/:id/status', authenticateToken, requireVendorOwner, ordersController.updateOrderStatus);
 router.post('/merchant/:vendorId/orders/:id/status', authenticateToken, requireVendorOwner, ordersController.updateOrderStatus);
 router.patch('/merchant/:vendorId/orders/:id/status', authenticateToken, requireVendorOwner, ordersController.updateOrderStatus);
