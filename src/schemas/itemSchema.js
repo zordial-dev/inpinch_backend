@@ -40,7 +40,7 @@ const createItemSchema = {
     category: z.string().trim().max(50, 'Category must not exceed 50 characters').optional(),
     unit: z.string().trim().max(20, 'Unit must not exceed 20 characters').optional(),
     is_available: z.coerce.boolean().optional().default(true),
-    image_url: z.string().trim().max(2048, 'Image URL must not exceed 2048 characters').optional()
+    image_url: z.string().trim().max(2048, 'Image URL must not exceed 2048 characters').refine(val => val === undefined || val.length > 0, 'Product image is required.').optional()
   }).passthrough().preprocess(normalizeItemPayload)
 };
 
@@ -78,6 +78,7 @@ const updateItemStockSchema = {
 
 module.exports = {
   createItemSchema,
+  addItemSchema: createItemSchema,
   updateItemSchema,
   updateItemStockSchema,
   normalizeItemPayload

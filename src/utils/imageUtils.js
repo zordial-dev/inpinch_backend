@@ -192,14 +192,18 @@ function normalizeImageUrl(rawUrl, defaultFallback = null) {
 
         // 6. Fix missing protocol
         if (!/^https?:\/\//i.test(url) && !url.startsWith('data:') && !url.startsWith('blob:')) {
+            if (/\s/.test(url)) return defaultFallback;
             url = `https://${url}`;
         }
 
         // 7. Validate URL syntax
-        new URL(url);
+        const parsedUrl = new URL(url);
+        if (!parsedUrl.hostname || (!parsedUrl.hostname.includes('.') && parsedUrl.hostname !== 'localhost')) {
+            return defaultFallback;
+        }
         return url;
     } catch (err) {
-        return url || defaultFallback;
+        return defaultFallback;
     }
 }
 

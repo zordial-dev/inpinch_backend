@@ -16,6 +16,7 @@ const {
   verifyOtpSchema,
   resetPasswordSchema
 } = require('../../schemas/authSchema');
+const { createItemSchema, updateItemSchema } = require('../../schemas/itemSchema');
 const { upload, handleMulterError } = require('../../middleware/upload');
 
 /**
@@ -181,9 +182,9 @@ router.patch(['/:vendorId(\\d+)/settings', '/:vendorId(\\d+)/profile', '/:vendor
 
 // Vendor Catalog / Items & Products Routes (/api/vendors/:vendorId/items & /products)
 router.get(['/:vendorId/items', '/:vendorId/products'], storefrontController.getVendorStorefront);
-router.post(['/:vendorId/items', '/:vendorId/products'], upload.any(), handleMulterError, authenticateToken, requireVendorOwner, vendorPanelController.addItem);
-router.put(['/:vendorId/items/:itemId', '/:vendorId/products/:itemId'], upload.any(), handleMulterError, authenticateToken, requireVendorOwner, vendorPanelController.updateItem);
-router.patch(['/:vendorId/items/:itemId', '/:vendorId/products/:itemId'], upload.any(), handleMulterError, authenticateToken, requireVendorOwner, vendorPanelController.updateItem);
+router.post(['/:vendorId/items', '/:vendorId/products'], upload.any(), handleMulterError, authenticateToken, requireVendorOwner, validateRequest(createItemSchema), vendorPanelController.addItem);
+router.put(['/:vendorId/items/:itemId', '/:vendorId/products/:itemId'], upload.any(), handleMulterError, authenticateToken, requireVendorOwner, validateRequest(updateItemSchema), vendorPanelController.updateItem);
+router.patch(['/:vendorId/items/:itemId', '/:vendorId/products/:itemId'], upload.any(), handleMulterError, authenticateToken, requireVendorOwner, validateRequest(updateItemSchema), vendorPanelController.updateItem);
 router.post(['/:vendorId/items/:itemId/image', '/:vendorId/products/:itemId/image'], upload.any(), handleMulterError, authenticateToken, requireVendorOwner, vendorPanelController.updateItemImage);
 router.put(['/:vendorId/items/:itemId/image', '/:vendorId/products/:itemId/image'], upload.any(), handleMulterError, authenticateToken, requireVendorOwner, vendorPanelController.updateItemImage);
 router.patch(['/:vendorId/items/:itemId/image', '/:vendorId/products/:itemId/image'], upload.any(), handleMulterError, authenticateToken, requireVendorOwner, vendorPanelController.updateItemImage);
