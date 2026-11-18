@@ -12,8 +12,8 @@ async function getSocietyVendorsStorefront(req, res) {
         const { search, page, limit } = req.query;
         const isPaginated = page !== undefined || limit !== undefined;
 
-        const pageNum = parseInt(page || 1, 10);
-        const limitNum = parseInt(limit || 24, 10);
+        const pageNum = Math.max(1, parseInt(page || 1, 10));
+        const limitNum = Math.min(50, Math.max(1, parseInt(limit || 24, 10)));
         const offset = (pageNum - 1) * limitNum;
 
         const startTime = performance.now();
@@ -71,8 +71,15 @@ async function getSocietyVendorsStorefront(req, res) {
             const finalImg = rawImg ? (typeof normalizeImageUrl === 'function' ? normalizeImageUrl(rawImg) : rawImg) : null;
             const eligibility = getVendorPaymentEligibility(v);
             const isSubActive = Boolean(v.is_subscription_active);
+            const sanitizedVendor = { ...v };
+            delete sanitizedVendor.ifsc_code;
+            delete sanitizedVendor.upi_id;
+            delete sanitizedVendor.qr_code;
+            delete sanitizedVendor.password;
+            delete sanitizedVendor.password_hash;
+            delete sanitizedVendor.push_token;
             return {
-                ...v,
+                ...sanitizedVendor,
                 account_number: maskAccountNumber(v.account_number),
                 bank_account_number: maskAccountNumber(v.bank_account_number || v.account_number),
                 payment_eligibility: eligibility,
@@ -146,7 +153,8 @@ async function getVendorStorefront(req, res) {
             'push_token', 'fcm_token', 'device_token',
             'total_revenue', 'strikes',
             'hold_reason', 'hold_email_subject',
-            'has_resubmitted', 'resubmitted_at'
+            'has_resubmitted', 'resubmitted_at',
+            'ifsc_code', 'upi_id', 'qr_code'
         ];
         for (const sField of sensitiveMerchantFields) {
             delete vendor[sField];
@@ -397,8 +405,8 @@ async function searchVendorsLocationAware(req, res) {
         const targetType = String(type || vendor_type || '').trim().toLowerCase();
 
         const isPaginated = page !== undefined || limit !== undefined;
-        const pageNum = parseInt(page || 1, 10);
-        const limitNum = parseInt(limit || 24, 10);
+        const pageNum = Math.max(1, parseInt(page || 1, 10));
+        const limitNum = Math.min(50, Math.max(1, parseInt(limit || 24, 10)));
         const offset = (pageNum - 1) * limitNum;
 
         let sql = `SELECT v.vendor_id, v.society_id, v.vendor_name, v.gst_number, v.phone_number, v.email,

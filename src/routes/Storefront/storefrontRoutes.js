@@ -1,6 +1,34 @@
 const express = require('express');
 const router = express.Router();
 const storefrontController = require('../../controllers/Storefront/storefrontController');
+const publicDiscoveryController = require('../../controllers/Storefront/publicDiscoveryController');
+const { validateRequest } = require('../../middleware/validate');
+const {
+    categoryStoresQuerySchema,
+    categoryDetailParamSchema,
+    storeProductsQuerySchema,
+    storeServicesQuerySchema
+} = require('../../schemas/storeDiscoverySchema');
+
+// ── Category to Store Browsing Aliases (Public) ─────────────
+router.get('/categories/:categoryId/stores', validateRequest(categoryStoresQuerySchema), publicDiscoveryController.getStoresByCategory);
+router.get('/categories/:categoryId', validateRequest(categoryDetailParamSchema), publicDiscoveryController.getCategoryById);
+
+// ── Store Catalog Endpoints (Paginated, max limit 50) ─────────
+router.get([
+    '/stores/:id/products',
+    '/stores/:id/items',
+    '/vendors/:id/products',
+    '/vendors/:id/items',
+    '/merchants/:id/products',
+    '/merchants/:id/items'
+], validateRequest(storeProductsQuerySchema), publicDiscoveryController.getStoreProducts);
+
+router.get([
+    '/stores/:id/services',
+    '/vendors/:id/services',
+    '/merchants/:id/services'
+], validateRequest(storeServicesQuerySchema), publicDiscoveryController.getStoreServices);
 
 // GET /api/vendors/search - Location-aware storefront vendor discovery & search
 router.get('/vendors/search', storefrontController.searchVendorsLocationAware);
