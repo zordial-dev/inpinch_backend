@@ -33,4 +33,11 @@ router.get('/status/:vendorId', authenticateToken, subscriptionController.getVen
 // 6. Expiry Email Reminders Trigger
 router.post('/trigger-reminders', subscriptionController.triggerReminders.bind(subscriptionController));
 
+// 7. Subscription Deletion & Cancellation (with automatic coupon redemption cleanup)
+router.delete('/:subscriptionId', authenticateToken, subscriptionController.deleteSubscription.bind(subscriptionController));
+router.delete('/vendor/:vendorId', authenticateToken, subscriptionController.deleteSubscription.bind(subscriptionController));
+router.delete('/', authenticateToken, subscriptionController.deleteSubscription.bind(subscriptionController));
+router.post('/cancel', authenticateToken, subscriptionController.cancelSubscription.bind(subscriptionController));
+router.post('/:subscriptionId/cancel', authenticateToken, subscriptionController.cancelSubscription.bind(subscriptionController));
+
 module.exports = router;

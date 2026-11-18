@@ -346,6 +346,50 @@ class SubscriptionController {
       return res.status(500).json({ success: false, error: err.message || 'Failed to run subscription reminders' });
     }
   }
+
+  /**
+   * DELETE /api/subscriptions/:subscriptionId
+   * DELETE /api/subscriptions/vendor/:vendorId
+   * Admin / merchant deletion of subscription with automatic coupon redemption cleanup.
+   */
+  async deleteSubscription(req, res) {
+    try {
+      const subscriptionId = req.params.subscriptionId || req.params.id || req.body?.subscription_id || req.query?.subscription_id;
+      const vendorId = req.params.vendorId || req.body?.vendor_id || req.query?.vendor_id || req.user?.vendor_id || req.user?.id;
+      const couponCode = req.body?.coupon_code || req.query?.coupon_code;
+
+      if (!subscriptionId && !vendorId) {
+        return res.status(400).json({
+          success: false,
+          error: 'subscriptionId or vendorId is required to delete subscription'
+        });
+      }
+
+      const result = await subscriptionService.deleteSubscription({
+        subscriptionId,
+        vendorId,
+        couponCode
+      });
+
+      return res.status(200).json({
+        success: true,
+        ...result
+      });
+    } catch (err) {
+      console.error('Error deleting subscription:', err);
+      return res.status(500).json({
+        success: false,
+        error: err.message || 'Failed to delete subscription'
+      });
+    }
+  }
+
+  /**
+   * POST /api/subscriptions/:subscriptionId/cancel (Alias to deleteSubscription)
+   */
+  async cancelSubscription(req, res) {
+    return this.deleteSubscription(req, res);
+  }
 }
 
 module.exports = new SubscriptionController();
