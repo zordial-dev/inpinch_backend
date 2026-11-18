@@ -217,6 +217,22 @@ router.get([
   '/api/subscriptions/:vendorId/current'
 ], authenticateToken, requireVendorOwner, subscriptionController.getVendorSubscriptionStatus.bind(subscriptionController));
 
+// ── Subscription Deletion & Cancellation Direct Aliases ─────
+router.delete([
+  '/api/subscriptions/:subscriptionId',
+  '/api/subscriptions/vendor/:vendorId',
+  '/api/subscriptions',
+  '/api/vendorPanel/:vendorId/subscription',
+  '/api/merchantPanel/:vendorId/subscription'
+], authenticateToken, subscriptionController.deleteSubscription.bind(subscriptionController));
+
+router.post([
+  '/api/subscriptions/:subscriptionId/cancel',
+  '/api/subscriptions/cancel',
+  '/api/vendorPanel/:vendorId/cancel-subscription',
+  '/api/merchantPanel/:vendorId/cancel-subscription'
+], authenticateToken, subscriptionController.cancelSubscription.bind(subscriptionController));
+
 // ── Categories & Platform Config Direct Endpoints ──────────
 router.get('/api/categories', storefrontController.getCategories);
 router.get('/api/vendors/categories', storefrontController.getCategories);

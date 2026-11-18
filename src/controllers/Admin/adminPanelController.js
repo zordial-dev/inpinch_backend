@@ -2279,7 +2279,17 @@ async function getFinancialStats(req, res) {
   }
 }
 async function renewSubscription(req, res) { return respond(res, 200, {}, 'Subscription renewed.'); }
-async function cancelSubscription(req, res) { return respond(res, 200, {}, 'Subscription cancelled.'); }
+async function cancelSubscription(req, res) {
+  try {
+    const subscriptionService = require('../../services/subscriptionService');
+    const subscriptionId = req.params.subscriptionId || req.params.id || req.body?.subscription_id;
+    const vendorId = req.params.vendorId || req.body?.vendor_id || req.query?.vendor_id;
+    const result = await subscriptionService.deleteSubscription({ subscriptionId, vendorId });
+    return respond(res, 200, result, 'Subscription cancelled and coupon redemption cleaned up successfully.');
+  } catch (err) {
+    return sendStandardError(res, 500, err.message || 'Failed to cancel subscription.');
+  }
+}
 async function getInvoicePreview(req, res) { return respond(res, 200, {}, 'Invoice preview.'); }
 
 // Module 6: Orders & Payments

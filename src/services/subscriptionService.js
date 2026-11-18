@@ -1611,6 +1611,153 @@ class SubscriptionService {
 
     return report;
   }
+
+  /**
+   * 11. DELETE / CANCEL SUBSCRIPTION WITH ATOMIC COUPON REDEMPTION CLEANUP
+   * Atomically deletes a subscription, cleans up any associated coupon_redemptions record,
+   * decrements coupons.times_used by exactly 1 (preventing negative values),
+   * and restores coupon eligibility for the merchant.
+   */
+  async deleteSubscription({ subscriptionId, vendorId, couponCode } = {}) {
+    const subId = subscriptionId ? Number(subscriptionId) : null;
+    const vId = vendorId ? Number(vendorId) : null;
+
+    if (!subId && !vId) {
+      throw new Error('subscriptionId or vendorId is required to delete a subscription');
+    }
+
+    return await withTransaction(async (txQuery) => {
+      // 1. Locate the subscription record (with row lock)
+      let sub = null;
+      if (subId) {
+        const subRes = await txQuery(
+          `SELECT * FROM subscriptions WHERE subscription_id = ? FOR UPDATE`,
+          [subId]
+        );
+        if (subRes.rows && subRes.rows.length > 0) {
+          sub = subRes.rows[0];
+        }
+      } else if (vId) {
+        const subRes = await txQuery(
+          `SELECT * FROM subscriptions WHERE vendor_id = ? ORDER BY subscription_id DESC LIMIT 1 FOR UPDATE`,
+          [vId]
+        );
+        if (subRes.rows && subRes.rows.length > 0) {
+          sub = subRes.rows[0];
+        }
+      }
+
+      const actualVendorId = sub ? Number(sub.vendor_id) : vId;
+      const actualSubId = sub ? Number(sub.subscription_id) : subId;
+      const subCouponCode = (sub?.coupon_code || couponCode || '').trim().toUpperCase();
+
+      // 2. Find any linked coupon_redemptions record
+      let redemptions = [];
+      if (actualSubId) {
+        const rRes = await txQuery(
+          `SELECT * FROM coupon_redemptions WHERE subscription_id = ? FOR UPDATE`,
+          [actualSubId]
+        );
+        if (rRes.rows && rRes.rows.length > 0) {
+          redemptions = rRes.rows;
+        }
+      }
+
+      // If not linked by subscription_id:
+      // - If sub exists, ONLY check fallback if sub actually had a coupon_code recorded
+      // - If sub does NOT exist (already deleted manually), check for orphaned redemptions (subscription_id IS NULL)
+      const shouldCheckFallback = redemptions.length === 0 && actualVendorId && (!sub ? true : Boolean(subCouponCode));
+      if (shouldCheckFallback) {
+        let q = `SELECT * FROM coupon_redemptions WHERE vendor_id = ?`;
+        const qParams = [actualVendorId];
+        if (subCouponCode) {
+          q += ` AND UPPER(coupon_code) = UPPER(?)`;
+          qParams.push(subCouponCode);
+        }
+        if (actualSubId) {
+          q += ` AND (subscription_id IS NULL OR subscription_id = ?)`;
+          qParams.push(actualSubId);
+        } else {
+          // If no specific subscription exists/specified, target orphaned redemptions
+          // so we never inadvertently touch redemptions attached to other active subscriptions
+          q += ` AND subscription_id IS NULL`;
+        }
+        q += ` FOR UPDATE`;
+        const rRes = await txQuery(q, qParams);
+        if (rRes.rows && rRes.rows.length > 0) {
+          redemptions = rRes.rows;
+        }
+      }
+
+      // If neither subscription nor redemption was found, return idempotent success
+      if (!sub && redemptions.length === 0) {
+        return {
+          success: true,
+          deleted: false,
+          message: 'Subscription or redemption not found or already deleted.',
+          subscription_id: actualSubId,
+          vendor_id: actualVendorId,
+          coupon_redemption_deleted: false,
+          times_used_decremented: false
+        };
+      }
+
+      // 3. Delete matching coupon_redemptions records & decrement coupons.times_used
+      let redemptionsDeletedCount = 0;
+      let timesUsedDecremented = false;
+
+      for (const red of redemptions) {
+        const delRes = await txQuery(
+          `DELETE FROM coupon_redemptions WHERE id = ?`,
+          [red.id]
+        );
+        if (delRes.rowCount > 0) {
+          redemptionsDeletedCount++;
+          const cCode = String(red.coupon_code).trim().toUpperCase();
+
+          // Decrement times_used on coupons table by 1 per deleted redemption
+          // Prevent times_used from becoming negative using GREATEST(0, times_used - 1)
+          const couponUpdateRes = await txQuery(
+            `UPDATE coupons 
+             SET times_used = GREATEST(0, COALESCE(times_used, 0) - 1),
+                 status = CASE WHEN GREATEST(0, COALESCE(times_used, 0) - 1) < usage_limit THEN 'unused' ELSE status END
+             WHERE UPPER(coupon_code) = UPPER(?) AND COALESCE(times_used, 0) > 0
+             RETURNING id, coupon_code, times_used, usage_limit, status`,
+            [cCode]
+          );
+          if (couponUpdateRes.rows && couponUpdateRes.rows.length > 0) {
+            timesUsedDecremented = true;
+          }
+        }
+      }
+
+      // 4. Delete the subscription record from subscriptions table (if it exists)
+      let subscriptionDeleted = false;
+      if (actualSubId && sub) {
+        const delSubRes = await txQuery(
+          `DELETE FROM subscriptions WHERE subscription_id = ?`,
+          [actualSubId]
+        );
+        subscriptionDeleted = delSubRes.rowCount > 0;
+      }
+
+      // 5. Clear application memory cache
+      memoryCache.clear();
+
+      return {
+        success: true,
+        deleted: subscriptionDeleted || redemptionsDeletedCount > 0,
+        subscription_deleted: subscriptionDeleted,
+        subscription_id: actualSubId,
+        vendor_id: actualVendorId,
+        coupon_redemption_deleted: redemptionsDeletedCount > 0,
+        redemptions_deleted_count: redemptionsDeletedCount,
+        times_used_decremented: timesUsedDecremented,
+        coupon_code: subCouponCode || null,
+        message: `Subscription ${actualSubId || ''} deleted successfully. ${redemptionsDeletedCount > 0 ? 'Associated coupon redemption removed and usage limit restored.' : ''}`.trim()
+      };
+    });
+  }
 }
 
 module.exports = new SubscriptionService();

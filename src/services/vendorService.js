@@ -537,6 +537,12 @@ class VendorService {
 
     const actualVendorId = Number(vendorRes.rows[0].vendor_id);
 
+    // Clean up vendor subscriptions and restore coupon usage limits atomically
+    const subscriptionService = require('./subscriptionService');
+    await subscriptionService.deleteSubscription({ vendorId: actualVendorId }).catch(err => {
+      console.warn(`[deleteVendorStore] Error cleaning up subscriptions for vendor ${actualVendorId}:`, err.message);
+    });
+
     // Delete associated items
     await query(`DELETE FROM items WHERE vendor_id = ?`, [actualVendorId]).catch(() => {});
     

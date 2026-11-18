@@ -54,8 +54,15 @@ router.get('/stats', authenticateAdminToken, requirePower('SUBSCRIPTIONS'), admi
 // POST /api/subscriptions/:subscriptionId/renew - Admin Renew Merchant Subscription
 router.post('/:subscriptionId/renew', authenticateAdminToken, requirePower('SUBSCRIPTIONS'), adminPanelController.renewSubscription);
 
+// POST /api/subscriptions/:subscriptionId/cancel - Admin Cancel Merchant Subscription
+router.post('/:subscriptionId/cancel', authenticateAdminToken, requirePower('SUBSCRIPTIONS'), adminPanelController.cancelSubscription);
+
+// DELETE /api/subscriptions/:subscriptionId - Delete subscription and restore coupon redemptions
+router.delete('/:subscriptionId', authenticateAdminToken, requirePower('SUBSCRIPTIONS'), subscriptionController.deleteSubscription.bind(subscriptionController));
+router.delete('/vendor/:vendorId', authenticateAdminToken, requirePower('SUBSCRIPTIONS'), subscriptionController.deleteSubscription.bind(subscriptionController));
+router.delete('/', authenticateAdminToken, requirePower('SUBSCRIPTIONS'), subscriptionController.deleteSubscription.bind(subscriptionController));
+
 // GET /api/subscriptions/:subscriptionId/invoice - Get GST Tax Invoice Preview
 router.get('/:subscriptionId/invoice', authenticateAdminToken, adminPanelController.getInvoicePreview);
 
 module.exports = router;
-
