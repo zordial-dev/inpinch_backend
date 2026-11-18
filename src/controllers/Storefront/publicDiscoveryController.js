@@ -439,6 +439,318 @@ async function getSubcategories(req, res) {
 }
 
 /**
+ * 5b. GET /api/public/categories/:categoryId
+ * Get complete details of a single category by ID, slug, or name,
+ * including subcategories and active store count.
+ */
+async function getCategoryById(req, res) {
+  try {
+    const { categoryId } = req.params;
+    const cat = await resolveCategoryRecord(categoryId);
+
+    if (!cat || !cat.is_active) {
+      return res.status(404).json({
+        success: false,
+        message: `Category '${categoryId}' not found`,
+        data: null
+      });
+    }
+
+    // Get active child subcategories
+    const subRes = await query(
+      `SELECT category_id, name, slug, type, parent_id, icon_url, image_url, display_order, is_active 
+       FROM categories 
+       WHERE parent_id = ? AND is_active = TRUE 
+       ORDER BY display_order ASC, name ASC`,
+      [cat.category_id]
+    ).catch(() => ({ rows: [] }));
+
+    const subcategories = (subRes.rows || []).map(s => ({
+      category_id: Number(s.category_id),
+      id: Number(s.category_id),
+      name: s.name,
+      slug: s.slug,
+      type: s.type || 'all',
+      parent_id: Number(s.parent_id),
+      icon_url: s.icon_url || null,
+      image_url: s.image_url || null,
+      display_order: s.display_order || 0
+    }));
+
+    // Collect all matching category names (category + subcategories)
+    const eligibleNames = [cat.name.toLowerCase(), cat.slug.toLowerCase()];
+    subcategories.forEach(s => {
+      eligibleNames.push(s.name.toLowerCase(), s.slug.toLowerCase());
+    });
+
+    const catPlaceholders = eligibleNames.map(() => '?').join(', ');
+
+    // Count eligible active stores in this category
+    const countSql = `
+      SELECT COUNT(DISTINCT v.vendor_id) AS total_stores
+      FROM vendors v
+      WHERE UPPER(v.status) = 'ACTIVE'
+        AND (
+          LOWER(TRIM(COALESCE(v.category, ''))) IN (${catPlaceholders})
+          OR EXISTS (
+            SELECT 1 FROM items i 
+            WHERE i.vendor_id = v.vendor_id 
+              AND (i.in_stock = TRUE OR i.is_available = TRUE)
+              AND LOWER(TRIM(COALESCE(i.category, ''))) IN (${catPlaceholders})
+          )
+          OR EXISTS (
+            SELECT 1 FROM services srv 
+            WHERE srv.vendor_id = v.vendor_id 
+              AND COALESCE(srv.is_available, TRUE) = TRUE
+              AND LOWER(TRIM(COALESCE(srv.category, ''))) IN (${catPlaceholders})
+          )
+        )
+    `;
+
+    const countRes = await query(countSql, [...eligibleNames, ...eligibleNames, ...eligibleNames]).catch(() => ({ rows: [{ total_stores: 0 }] }));
+    const storesCount = parseInt(countRes.rows[0]?.total_stores || 0, 10);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Category retrieved successfully',
+      data: {
+        category_id: Number(cat.category_id),
+        id: Number(cat.category_id),
+        name: cat.name,
+        slug: cat.slug,
+        type: cat.type || 'all',
+        parent_id: cat.parent_id ? Number(cat.parent_id) : null,
+        icon_url: cat.icon_url || null,
+        image_url: cat.image_url || null,
+        display_order: cat.display_order || 0,
+        subcategories_count: subcategories.length,
+        stores_count: storesCount,
+        subcategories
+      }
+    });
+  } catch (error) {
+    console.error('[getCategoryById Error]:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve category details',
+      error: error.message
+    });
+  }
+}
+
+/**
+ * 5c. GET /api/public/categories/:categoryId/stores
+ * Category Detail Page: Stores belonging to the selected category.
+ * Enforces strict maximum pagination limit of 50.
+ * Returns public store info: ID, name, logo, description, address, rating, active subscription, etc.
+ */
+async function getStoresByCategory(req, res) {
+  try {
+    const { categoryId } = req.params;
+    const cat = await resolveCategoryRecord(categoryId);
+
+    if (!cat || !cat.is_active) {
+      return res.status(404).json({
+        success: false,
+        message: `Category '${categoryId}' not found`,
+        data: []
+      });
+    }
+
+    const {
+      page = 1,
+      limit = 20,
+      search,
+      q,
+      city,
+      sort = 'rating'
+    } = req.query;
+
+    const pageNum = Math.max(1, parseInt(page, 10));
+    // Enforce strict maximum page size of 50 per requirement
+    const limitNum = Math.min(50, Math.max(1, parseInt(limit, 10)));
+    const offset = (pageNum - 1) * limitNum;
+    const searchTerm = (search || q || '').trim();
+    const cityFilter = (city || '').trim();
+
+    // Gather child subcategories
+    const subRes = await query(
+      `SELECT category_id, name, slug FROM categories WHERE parent_id = ? AND is_active = TRUE`,
+      [cat.category_id]
+    ).catch(() => ({ rows: [] }));
+
+    const eligibleNames = [cat.name.toLowerCase(), cat.slug.toLowerCase()];
+    (subRes.rows || []).forEach(s => {
+      eligibleNames.push(s.name.toLowerCase(), s.slug.toLowerCase());
+    });
+
+    const catPlaceholders = eligibleNames.map(() => '?').join(', ');
+
+    let whereConditions = [
+      "UPPER(v.status) = 'ACTIVE'",
+      `(
+        LOWER(TRIM(COALESCE(v.category, ''))) IN (${catPlaceholders})
+        OR EXISTS (
+          SELECT 1 FROM items i 
+          WHERE i.vendor_id = v.vendor_id 
+            AND (i.in_stock = TRUE OR i.is_available = TRUE)
+            AND LOWER(TRIM(COALESCE(i.category, ''))) IN (${catPlaceholders})
+        )
+        OR EXISTS (
+          SELECT 1 FROM services srv 
+          WHERE srv.vendor_id = v.vendor_id 
+            AND COALESCE(srv.is_available, TRUE) = TRUE
+            AND LOWER(TRIM(COALESCE(srv.category, ''))) IN (${catPlaceholders})
+        )
+      )`
+    ];
+    let queryParams = [...eligibleNames, ...eligibleNames, ...eligibleNames];
+
+    if (cityFilter) {
+      whereConditions.push(`(
+        LOWER(TRIM(COALESCE(v.city, ''))) = LOWER(TRIM(?))
+        OR LOWER(TRIM(COALESCE(s.city, ''))) = LOWER(TRIM(?))
+      )`);
+      queryParams.push(cityFilter, cityFilter);
+    }
+
+    if (searchTerm) {
+      whereConditions.push(`(
+        LOWER(v.store_name) LIKE ?
+        OR LOWER(v.vendor_name) LIKE ?
+        OR LOWER(COALESCE(v.description, '')) LIKE ?
+        OR LOWER(COALESCE(v.area, '')) LIKE ?
+        OR LOWER(COALESCE(v.address, '')) LIKE ?
+      )`);
+      const searchPattern = `%${searchTerm.toLowerCase()}%`;
+      queryParams.push(searchPattern, searchPattern, searchPattern, searchPattern, searchPattern);
+    }
+
+    const whereClause = whereConditions.join(' AND ');
+
+    // Total count of matching eligible stores
+    const countSql = `
+      SELECT COUNT(DISTINCT v.vendor_id) AS total
+      FROM vendors v
+      LEFT JOIN societies s ON v.society_id = s.society_id
+      WHERE ${whereClause}
+    `;
+    const countRes = await query(countSql, queryParams);
+    const total_records = parseInt(countRes.rows[0]?.total || 0, 10);
+
+    // Sorting
+    let orderBy = 'ORDER BY v.avg_rating DESC, v.rating_count DESC, v.store_name ASC';
+    if (sort === 'name') {
+      orderBy = 'ORDER BY v.store_name ASC';
+    } else if (sort === 'newest') {
+      orderBy = 'ORDER BY v.vendor_id DESC';
+    }
+
+    // Stores select query
+    const selectSql = `
+      SELECT v.vendor_id, v.public_id, v.store_name, v.vendor_name, v.owner_name,
+             v.category, v.vendor_type, v.description, v.logo, v.shop_image,
+             v.address, v.area, v.city, v.state, v.pincode,
+             v.phone_number, v.whatsapp_number, v.opening_time, v.closing_time,
+             v.avg_rating, v.rating_count, v.status,
+             s.society_name, s.city AS society_city,
+             EXISTS (
+               SELECT 1 FROM subscriptions sub 
+               WHERE sub.vendor_id = v.vendor_id 
+                 AND UPPER(sub.status) = 'ACTIVE' 
+                 AND sub.end_date >= CURRENT_DATE
+             ) AS is_subscription_active
+      FROM vendors v
+      LEFT JOIN societies s ON v.society_id = s.society_id
+      WHERE ${whereClause}
+      ${orderBy}
+      LIMIT ? OFFSET ?
+    `;
+
+    const selectParams = [...queryParams, limitNum, offset];
+    const result = await query(selectSql, selectParams);
+
+    const stores = (result.rows || []).map(v => {
+      const rawImage = v.logo || v.shop_image || null;
+      const finalImage = rawImage
+        ? (typeof normalizeImageUrl === 'function' ? normalizeImageUrl(rawImage) : rawImage)
+        : null;
+      const isSubActive = Boolean(v.is_subscription_active);
+      const rating = parseFloat(v.avg_rating || 0);
+      const ratingCount = parseInt(v.rating_count || 0, 10);
+
+      return {
+        store_id: Number(v.vendor_id),
+        id: Number(v.vendor_id),
+        vendor_id: Number(v.vendor_id),
+        public_id: v.public_id || ('vnd@' + String(v.vendor_id).padStart(4, '0')),
+        store_name: v.store_name || v.vendor_name || 'Store',
+        vendor_name: v.vendor_name || v.store_name || 'Store Manager',
+        owner_name: v.owner_name || v.vendor_name || '',
+        category: v.category || cat.name,
+        vendor_type: v.vendor_type || 'product',
+        description: v.description || '',
+        logo: finalImage,
+        shop_image: finalImage,
+        image_url: finalImage,
+        image: finalImage,
+        address: v.address || '',
+        area: v.area || '',
+        city: v.city || v.society_city || '',
+        state: v.state || '',
+        pincode: v.pincode || '',
+        phone: v.phone_number || '',
+        phone_number: v.phone_number || '',
+        whatsapp_number: v.whatsapp_number || null,
+        opening_time: v.opening_time || null,
+        closing_time: v.closing_time || null,
+        rating: rating,
+        avg_rating: rating,
+        rating_count: ratingCount,
+        reviews_count: ratingCount,
+        is_subscription_active: isSubActive,
+        subscription_active: isSubActive,
+        is_order_eligible: isSubActive,
+        can_accept_orders: isSubActive,
+        status: String(v.status || 'ACTIVE').toLowerCase()
+      };
+    });
+
+    const total_pages = Math.ceil(total_records / limitNum) || 1;
+
+    return res.status(200).json({
+      success: true,
+      message: 'Stores retrieved successfully',
+      category: {
+        category_id: Number(cat.category_id),
+        id: Number(cat.category_id),
+        name: cat.name,
+        slug: cat.slug,
+        type: cat.type || 'all',
+        icon_url: cat.icon_url || null,
+        image_url: cat.image_url || null
+      },
+      data: stores,
+      pagination: {
+        total_records,
+        total_pages,
+        current_page: pageNum,
+        page_size: limitNum,
+        has_next: pageNum < total_pages,
+        has_prev: pageNum > 1
+      }
+    });
+  } catch (error) {
+    console.error('[getStoresByCategory Error]:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve stores for category',
+      error: error.message
+    });
+  }
+}
+
+/**
  * 6. GET /api/public/cities/:cityId/categories
  * CRITICAL REQUIREMENT:
  * Returns ONLY categories that actually have eligible products, services, or merchants in the selected city.
@@ -1010,52 +1322,107 @@ async function getServiceById(req, res) {
 }
 
 /**
- * 10. GET /api/public/merchants/:id
- * Public merchant storefront endpoint (products + services + store info).
+ * 10. GET /api/public/merchants/:id, GET /api/public/stores/:id
+ * Public store/merchant detail endpoint (products + services + store info).
+ * Supports pagination for embedded items with maximum limit 50.
+ * Strips sensitive financial, authentication, and internal merchant data.
  */
 async function getMerchantById(req, res) {
   try {
     const { id } = req.params;
     const result = await query(`
       SELECT 
-        v.vendor_id, v.society_id, v.vendor_name, v.store_name, v.owner_name,
-        v.email, v.phone_number, v.whatsapp_number, v.shop_number, v.shop_image,
-        v.category, v.address, v.city, v.state, v.pincode, v.area,
+        v.vendor_id, v.public_id, v.society_id, v.vendor_name, v.store_name, v.owner_name,
+        v.email, v.phone_number, v.whatsapp_number, v.shop_number, v.shop_image, v.logo,
+        v.category, v.address, v.city, v.state, v.pincode, v.area, v.description,
         v.opening_time, v.closing_time, v.status, v.vendor_type,
-        s.society_name, s.city AS society_city
+        v.avg_rating, v.rating_count,
+        s.society_name, s.city AS society_city,
+        EXISTS (
+          SELECT 1 FROM subscriptions sub 
+          WHERE sub.vendor_id = v.vendor_id 
+            AND UPPER(sub.status) = 'ACTIVE' 
+            AND sub.end_date >= CURRENT_DATE
+        ) AS is_subscription_active
       FROM vendors v
       LEFT JOIN societies s ON v.society_id = s.society_id
-      WHERE (v.vendor_id = ? OR LOWER(v.store_name) = LOWER(?))
+      WHERE (CAST(v.vendor_id AS TEXT) = ? OR v.public_id = ? OR LOWER(v.store_name) = LOWER(?))
         AND UPPER(v.status) = 'ACTIVE'
       LIMIT 1
-    `, [/^\d+$/.test(id) ? parseInt(id, 10) : 0, id]);
+    `, [String(id), String(id), String(id)]);
 
     if (!result.rows || result.rows.length === 0) {
       return res.status(404).json({
         success: false,
-        message: `Merchant '${id}' not found or inactive`
+        message: `Store '${id}' not found or inactive`
       });
     }
 
     const vendor = result.rows[0];
-    const finalImage = typeof normalizeImageUrl === 'function'
-      ? normalizeImageUrl(vendor.shop_image)
-      : vendor.shop_image;
+    const rawImage = vendor.logo || vendor.shop_image || null;
+    const finalImage = rawImage
+      ? (typeof normalizeImageUrl === 'function' ? normalizeImageUrl(rawImage) : rawImage)
+      : null;
 
-    // Fetch items
-    const itemsRes = await query(`
+    const isSubActive = Boolean(vendor.is_subscription_active);
+    const rating = parseFloat(vendor.avg_rating || 0);
+    const ratingCount = parseInt(vendor.rating_count || 0, 10);
+
+    // Pagination & filter query parameters for items
+    const { page, limit, category, search, q } = req.query;
+    const isPaginated = page !== undefined || limit !== undefined;
+    const pageNum = Math.max(1, parseInt(page || 1, 10));
+    const limitNum = Math.min(50, Math.max(1, parseInt(limit || 20, 10)));
+    const offset = (pageNum - 1) * limitNum;
+    const itemCategory = (category || '').trim();
+    const itemSearch = (search || q || '').trim();
+
+    let itemWhere = ['vendor_id = ?'];
+    let itemParams = [vendor.vendor_id];
+
+    if (itemCategory) {
+      itemWhere.push('LOWER(TRIM(category)) = LOWER(TRIM(?))');
+      itemParams.push(itemCategory);
+    }
+
+    if (itemSearch) {
+      itemWhere.push('(LOWER(item_name) LIKE ? OR LOWER(COALESCE(description, \'\')) LIKE ?)');
+      const pattern = `%${itemSearch.toLowerCase()}%`;
+      itemParams.push(pattern, pattern);
+    }
+
+    const itemWhereClause = itemWhere.join(' AND ');
+
+    // Count total items
+    const itemCountRes = await query(
+      `SELECT COUNT(*) AS total FROM items WHERE ${itemWhereClause}`,
+      itemParams
+    ).catch(() => ({ rows: [{ total: 0 }] }));
+    const total_items = parseInt(itemCountRes.rows[0]?.total || 0, 10);
+
+    // Fetch items with optional pagination
+    let itemSql = `
       SELECT item_id, vendor_id, item_name, price, category, description, image_url, in_stock, stock, unit, is_available, created_at 
       FROM items 
-      WHERE vendor_id = ? 
+      WHERE ${itemWhereClause} 
       ORDER BY created_at DESC
-    `, [vendor.vendor_id]).catch(() => ({ rows: [] }));
+    `;
+    let execParams = [...itemParams];
+
+    if (isPaginated) {
+      itemSql += ` LIMIT ? OFFSET ?`;
+      execParams.push(limitNum, offset);
+    }
+
+    const itemsRes = await query(itemSql, execParams).catch(() => ({ rows: [] }));
+
+    const waPhone = vendor.whatsapp_number || vendor.phone_number;
 
     const items = (itemsRes.rows || []).map(i => {
       const img = typeof normalizeImageUrl === 'function'
         ? normalizeImageUrl(i.image_url, DEFAULT_PRODUCT_SERVICE_IMAGE)
         : (i.image_url || DEFAULT_PRODUCT_SERVICE_IMAGE);
       const isAvail = Boolean(i.in_stock) && (i.is_available === null || Boolean(i.is_available));
-      const waPhone = vendor.whatsapp_number || vendor.phone_number;
       return {
         item_id: Number(i.item_id),
         id: Number(i.item_id),
@@ -1065,10 +1432,12 @@ async function getMerchantById(req, res) {
         description: i.description || '',
         image_url: img,
         image: img,
+        images: img ? [img] : [],
         unit: i.unit || 'piece',
         in_stock: isAvail,
         is_available: isAvail,
-        whatsapp_order_url: buildWhatsAppUrl(waPhone, vendor.store_name, i.item_name, 'product')
+        whatsapp_order_url: buildWhatsAppUrl(waPhone, vendor.store_name, i.item_name, 'product'),
+        created_at: i.created_at
       };
     });
 
@@ -1084,11 +1453,11 @@ async function getMerchantById(req, res) {
       const img = typeof normalizeImageUrl === 'function'
         ? normalizeImageUrl(s.image_url, DEFAULT_PRODUCT_SERVICE_IMAGE)
         : (s.image_url || DEFAULT_PRODUCT_SERVICE_IMAGE);
-      const waPhone = vendor.whatsapp_number || vendor.phone_number;
       return {
         service_id: Number(s.service_id),
         id: Number(s.service_id),
         name: s.service_name,
+        service_name: s.service_name,
         price: parseFloat(s.price || 0),
         visiting_charge: parseFloat(s.visiting_charge || 0),
         estimated_duration: s.estimated_duration || '1 hour',
@@ -1097,43 +1466,339 @@ async function getMerchantById(req, res) {
         description: s.description || '',
         image_url: img,
         image: img,
+        images: img ? [img] : [],
         is_available: Boolean(s.is_available),
-        whatsapp_order_url: buildWhatsAppUrl(waPhone, vendor.store_name, s.service_name, 'service')
+        whatsapp_order_url: buildWhatsAppUrl(waPhone, vendor.store_name, s.service_name, 'service'),
+        created_at: s.created_at
       };
     });
 
+    const storeObj = {
+      store_id: Number(vendor.vendor_id),
+      id: Number(vendor.vendor_id),
+      vendor_id: Number(vendor.vendor_id),
+      public_id: vendor.public_id || ('vnd@' + String(vendor.vendor_id).padStart(4, '0')),
+      store_name: vendor.store_name,
+      vendor_name: vendor.vendor_name,
+      owner_name: vendor.owner_name || vendor.vendor_name,
+      category: vendor.category,
+      vendor_type: vendor.vendor_type || 'product',
+      description: vendor.description || '',
+      city: vendor.city || vendor.society_city || '',
+      state: vendor.state || '',
+      area: vendor.area || '',
+      address: vendor.address || '',
+      pincode: vendor.pincode || '',
+      society_name: vendor.society_name || null,
+      phone: vendor.phone_number,
+      phone_number: vendor.phone_number,
+      whatsapp_number: vendor.whatsapp_number || null,
+      logo: finalImage,
+      shop_image: finalImage,
+      image: finalImage,
+      image_url: finalImage,
+      opening_time: vendor.opening_time,
+      closing_time: vendor.closing_time,
+      rating: rating,
+      avg_rating: rating,
+      rating_count: ratingCount,
+      reviews_count: ratingCount,
+      is_subscription_active: isSubActive,
+      subscription_active: isSubActive,
+      is_order_eligible: isSubActive,
+      can_accept_orders: isSubActive,
+      status: String(vendor.status || 'ACTIVE').toLowerCase()
+    };
+
+    const total_pages = Math.ceil(total_items / limitNum) || 1;
+
     return res.status(200).json({
       success: true,
+      message: 'Store details retrieved successfully',
       data: {
-        merchant: {
-          vendor_id: Number(vendor.vendor_id),
-          id: Number(vendor.vendor_id),
-          store_name: vendor.store_name,
-          vendor_name: vendor.vendor_name,
-          category: vendor.category,
-          vendor_type: vendor.vendor_type || 'product',
-          city: vendor.city || vendor.society_city,
-          state: vendor.state,
-          area: vendor.area,
-          address: vendor.address,
-          society_name: vendor.society_name || null,
-          phone: vendor.phone_number,
-          whatsapp_number: vendor.whatsapp_number || null,
-          shop_image: finalImage,
-          image: finalImage,
-          opening_time: vendor.opening_time,
-          closing_time: vendor.closing_time,
-          status: vendor.status
-        },
+        store: storeObj,
+        merchant: storeObj,
         items,
-        services
+        products: items,
+        services,
+        ...(isPaginated ? {
+          products_pagination: {
+            total_records: total_items,
+            total_pages,
+            current_page: pageNum,
+            page_size: limitNum,
+            has_next: pageNum < total_pages,
+            has_prev: pageNum > 1
+          }
+        } : {})
       }
     });
   } catch (error) {
     console.error('[getMerchantById Error]:', error);
     return res.status(500).json({
       success: false,
-      message: 'Failed to retrieve merchant storefront',
+      message: 'Failed to retrieve store details',
+      error: error.message
+    });
+  }
+}
+
+/**
+ * 11. GET /api/public/stores/:id/products (or /items)
+ * Dedicated paginated endpoint for store products/items.
+ * Supports maximum page size of 50.
+ */
+async function getStoreProducts(req, res) {
+  try {
+    const storeIdParam = req.params.id || req.params.storeId;
+    const {
+      page = 1,
+      limit = 20,
+      category,
+      search,
+      q
+    } = req.query;
+
+    const pageNum = Math.max(1, parseInt(page, 10));
+    // Enforce strict maximum limit of 50
+    const limitNum = Math.min(50, Math.max(1, parseInt(limit, 10)));
+    const offset = (pageNum - 1) * limitNum;
+    const searchTerm = (search || q || '').trim();
+    const categoryFilter = (category || '').trim();
+
+    // Verify store exists and is ACTIVE
+    const storeRes = await query(
+      `SELECT vendor_id, store_name, vendor_name, status, phone_number, whatsapp_number 
+       FROM vendors 
+       WHERE (CAST(vendor_id AS TEXT) = ? OR LOWER(store_name) = LOWER(?)) 
+         AND UPPER(status) = 'ACTIVE' 
+       LIMIT 1`,
+      [String(storeIdParam), String(storeIdParam)]
+    );
+
+    if (!storeRes.rows || storeRes.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: `Store '${storeIdParam}' not found or is inactive`,
+        data: []
+      });
+    }
+
+    const store = storeRes.rows[0];
+    const vendorId = store.vendor_id;
+
+    let whereConditions = ['vendor_id = ?'];
+    let params = [vendorId];
+
+    if (categoryFilter) {
+      whereConditions.push('LOWER(TRIM(category)) = LOWER(TRIM(?))');
+      params.push(categoryFilter);
+    }
+
+    if (searchTerm) {
+      whereConditions.push('(LOWER(item_name) LIKE ? OR LOWER(COALESCE(description, \'\')) LIKE ?)');
+      const pattern = `%${searchTerm.toLowerCase()}%`;
+      params.push(pattern, pattern);
+    }
+
+    const whereClause = whereConditions.join(' AND ');
+
+    // Total count
+    const countRes = await query(`SELECT COUNT(*) AS total FROM items WHERE ${whereClause}`, params);
+    const total_records = parseInt(countRes.rows[0]?.total || 0, 10);
+
+    // Items query
+    const itemsRes = await query(`
+      SELECT item_id, vendor_id, item_name, price, category, description, image_url, in_stock, stock, unit, is_available, created_at 
+      FROM items 
+      WHERE ${whereClause} 
+      ORDER BY created_at DESC 
+      LIMIT ? OFFSET ?
+    `, [...params, limitNum, offset]);
+
+    const waPhone = store.whatsapp_number || store.phone_number;
+
+    const products = (itemsRes.rows || []).map(i => {
+      const img = typeof normalizeImageUrl === 'function'
+        ? normalizeImageUrl(i.image_url, DEFAULT_PRODUCT_SERVICE_IMAGE)
+        : (i.image_url || DEFAULT_PRODUCT_SERVICE_IMAGE);
+      const isAvail = Boolean(i.in_stock) && (i.is_available === null || Boolean(i.is_available));
+
+      return {
+        item_id: Number(i.item_id),
+        id: Number(i.item_id),
+        name: i.item_name,
+        price: parseFloat(i.price || 0),
+        category: i.category || 'General',
+        description: i.description || '',
+        image_url: img,
+        image: img,
+        images: img ? [img] : [],
+        unit: i.unit || 'piece',
+        in_stock: isAvail,
+        is_available: isAvail,
+        whatsapp_order_url: buildWhatsAppUrl(waPhone, store.store_name, i.item_name, 'product'),
+        created_at: i.created_at
+      };
+    });
+
+    const total_pages = Math.ceil(total_records / limitNum) || 1;
+
+    return res.status(200).json({
+      success: true,
+      message: 'Store products retrieved successfully',
+      store: {
+        store_id: Number(store.vendor_id),
+        id: Number(store.vendor_id),
+        store_name: store.store_name,
+        status: store.status
+      },
+      data: products,
+      pagination: {
+        total_records,
+        total_pages,
+        current_page: pageNum,
+        page_size: limitNum,
+        has_next: pageNum < total_pages,
+        has_prev: pageNum > 1
+      }
+    });
+  } catch (error) {
+    console.error('[getStoreProducts Error]:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve store products',
+      error: error.message
+    });
+  }
+}
+
+/**
+ * 12. GET /api/public/stores/:id/services
+ * Dedicated paginated endpoint for store services.
+ * Supports maximum page size of 50.
+ */
+async function getStoreServices(req, res) {
+  try {
+    const storeIdParam = req.params.id || req.params.storeId;
+    const {
+      page = 1,
+      limit = 20,
+      category,
+      search,
+      q
+    } = req.query;
+
+    const pageNum = Math.max(1, parseInt(page, 10));
+    // Enforce strict maximum limit of 50
+    const limitNum = Math.min(50, Math.max(1, parseInt(limit, 10)));
+    const offset = (pageNum - 1) * limitNum;
+    const searchTerm = (search || q || '').trim();
+    const categoryFilter = (category || '').trim();
+
+    // Verify store exists and is ACTIVE
+    const storeRes = await query(
+      `SELECT vendor_id, store_name, vendor_name, status, phone_number, whatsapp_number 
+       FROM vendors 
+       WHERE (CAST(vendor_id AS TEXT) = ? OR LOWER(store_name) = LOWER(?)) 
+         AND UPPER(status) = 'ACTIVE' 
+       LIMIT 1`,
+      [String(storeIdParam), String(storeIdParam)]
+    );
+
+    if (!storeRes.rows || storeRes.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: `Store '${storeIdParam}' not found or is inactive`,
+        data: []
+      });
+    }
+
+    const store = storeRes.rows[0];
+    const vendorId = store.vendor_id;
+
+    let whereConditions = ['vendor_id = ?'];
+    let params = [vendorId];
+
+    if (categoryFilter) {
+      whereConditions.push('LOWER(TRIM(category)) = LOWER(TRIM(?))');
+      params.push(categoryFilter);
+    }
+
+    if (searchTerm) {
+      whereConditions.push('(LOWER(service_name) LIKE ? OR LOWER(COALESCE(description, \'\')) LIKE ?)');
+      const pattern = `%${searchTerm.toLowerCase()}%`;
+      params.push(pattern, pattern);
+    }
+
+    const whereClause = whereConditions.join(' AND ');
+
+    // Total count
+    const countRes = await query(`SELECT COUNT(*) AS total FROM services WHERE ${whereClause}`, params);
+    const total_records = parseInt(countRes.rows[0]?.total || 0, 10);
+
+    // Services query
+    const servicesRes = await query(`
+      SELECT service_id, vendor_id, service_name, price, visiting_charge, estimated_duration, service_location, description, image_url, is_available, category, created_at 
+      FROM services 
+      WHERE ${whereClause} 
+      ORDER BY service_id ASC 
+      LIMIT ? OFFSET ?
+    `, [...params, limitNum, offset]);
+
+    const waPhone = store.whatsapp_number || store.phone_number;
+
+    const services = (servicesRes.rows || []).map(s => {
+      const img = typeof normalizeImageUrl === 'function'
+        ? normalizeImageUrl(s.image_url, DEFAULT_PRODUCT_SERVICE_IMAGE)
+        : (s.image_url || DEFAULT_PRODUCT_SERVICE_IMAGE);
+
+      return {
+        service_id: Number(s.service_id),
+        id: Number(s.service_id),
+        name: s.service_name,
+        service_name: s.service_name,
+        price: parseFloat(s.price || 0),
+        visiting_charge: parseFloat(s.visiting_charge || 0),
+        estimated_duration: s.estimated_duration || '1 hour',
+        service_location: s.service_location || "At Customer's Doorstep",
+        category: s.category || 'General Services',
+        description: s.description || '',
+        image_url: img,
+        image: img,
+        images: img ? [img] : [],
+        is_available: Boolean(s.is_available),
+        whatsapp_order_url: buildWhatsAppUrl(waPhone, store.store_name, s.service_name, 'service'),
+        created_at: s.created_at
+      };
+    });
+
+    const total_pages = Math.ceil(total_records / limitNum) || 1;
+
+    return res.status(200).json({
+      success: true,
+      message: 'Store services retrieved successfully',
+      store: {
+        store_id: Number(store.vendor_id),
+        id: Number(store.vendor_id),
+        store_name: store.store_name,
+        status: store.status
+      },
+      data: services,
+      pagination: {
+        total_records,
+        total_pages,
+        current_page: pageNum,
+        page_size: limitNum,
+        has_next: pageNum < total_pages,
+        has_prev: pageNum > 1
+      }
+    });
+  } catch (error) {
+    console.error('[getStoreServices Error]:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve store services',
       error: error.message
     });
   }
@@ -1144,11 +1809,15 @@ module.exports = {
   searchCities,
   getCityById,
   getCategories,
+  getCategoryById,
   getSubcategories,
+  getStoresByCategory,
   getCityAvailableCategories,
   discover,
   getProductById,
   getServiceById,
-  getMerchantById
+  getMerchantById,
+  getStoreProducts,
+  getStoreServices
 };
 
