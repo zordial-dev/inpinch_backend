@@ -254,7 +254,18 @@ async function addItem(req, res) {
         }
 
         const { item_name, description, price, stock, category, unit, is_available } = req.body || {};
-        const rawImg = req.body?.image_url || req.body?.imageUrl || req.body?.image || req.body?.item_image || req.body?.itemImage || req.body?.photo || req.body?.photo_url;
+        const hasImageInBody = Boolean(
+            req.body && (
+                req.body.image_url !== undefined ||
+                req.body.imageUrl !== undefined ||
+                req.body.image !== undefined ||
+                req.body.item_image !== undefined ||
+                req.body.itemImage !== undefined ||
+                req.body.photo !== undefined ||
+                req.body.photo_url !== undefined
+            )
+        );
+        const rawImg = hasImageInBody ? (req.body.image_url ?? req.body.imageUrl ?? req.body.image ?? req.body.item_image ?? req.body.itemImage ?? req.body.photo ?? req.body.photo_url) : null;
 
         // Check if file was uploaded via multipart/form-data (camera/gallery)
         const file = req.file || (req.files && req.files.length > 0 ? req.files[0] : null);
@@ -270,10 +281,33 @@ async function addItem(req, res) {
         }
 
         const avail = (is_available === false || is_available === 0 || is_available === 'false' || is_available === '0') ? 0 : 1;
-        const candidateImg = uploadedUrl || rawImg;
+        const candidateImg = uploadedUrl !== null ? uploadedUrl : rawImg;
 
-        // Use async resolveImageUrl with DEFAULT_PRODUCT_SERVICE_IMAGE fallback
-        const normalizedImg = await resolveImageUrl(candidateImg, DEFAULT_PRODUCT_SERVICE_IMAGE);
+        // Mandatory product image validation for new items
+        if (!candidateImg || typeof candidateImg !== 'string' || !candidateImg.trim()) {
+            return res.status(400).json({
+                success: false,
+                error: 'Product image is required.',
+                message: 'Product image is required.',
+                code: 'VALIDATION_ERROR',
+                errors: {
+                    image_url: 'Product image is required.'
+                }
+            });
+        }
+
+        const normalizedImg = await resolveImageUrl(candidateImg, null);
+        if (!normalizedImg || normalizedImg === DEFAULT_PRODUCT_SERVICE_IMAGE) {
+            return res.status(400).json({
+                success: false,
+                error: 'Product image is required.',
+                message: 'Product image is required.',
+                code: 'VALIDATION_ERROR',
+                errors: {
+                    image_url: 'Product image is required.'
+                }
+            });
+        }
 
         const result = await query(
             `INSERT INTO items (vendor_id, item_name, description, price, stock, category, unit, is_available, image_url) 
@@ -303,7 +337,18 @@ async function updateItem(req, res) {
     try {
         const { vendorId, itemId } = req.params;
         const { item_name, description, price, stock, category, unit, is_available } = req.body || {};
-        const rawImg = req.body?.image_url || req.body?.imageUrl || req.body?.image || req.body?.item_image || req.body?.itemImage || req.body?.photo || req.body?.photo_url;
+        const hasImageInBody = Boolean(
+            req.body && (
+                req.body.image_url !== undefined ||
+                req.body.imageUrl !== undefined ||
+                req.body.image !== undefined ||
+                req.body.item_image !== undefined ||
+                req.body.itemImage !== undefined ||
+                req.body.photo !== undefined ||
+                req.body.photo_url !== undefined
+            )
+        );
+        const rawImg = hasImageInBody ? (req.body.image_url ?? req.body.imageUrl ?? req.body.image ?? req.body.item_image ?? req.body.itemImage ?? req.body.photo ?? req.body.photo_url) : undefined;
 
         // Check if file was uploaded via multipart/form-data (camera/gallery)
         const file = req.file || (req.files && req.files.length > 0 ? req.files[0] : null);
@@ -318,8 +363,60 @@ async function updateItem(req, res) {
             }
         }
 
-        const candidateImg = uploadedUrl || rawImg;
-        const normalizedImg = candidateImg !== undefined ? await resolveImageUrl(candidateImg, DEFAULT_PRODUCT_SERVICE_IMAGE) : undefined;
+        // Lookup current item in DB to check existing image state and verify vendor ownership
+        const existingItemRes = await query(
+            `SELECT item_id, vendor_id, image_url FROM items WHERE item_id = ? AND (vendor_id = ? OR CAST(vendor_id AS TEXT) = ?)`,
+            [itemId, vendorId, String(vendorId)]
+        );
+
+        if (!existingItemRes.rows || existingItemRes.rows.length === 0) {
+            return res.status(404).json({ success: false, error: 'Item not found for this vendor' });
+        }
+
+        const existingItem = existingItemRes.rows[0];
+        const existingImg = typeof existingItem.image_url === 'string' ? existingItem.image_url.trim() : '';
+        const existingHasValidImage = Boolean(existingImg && existingImg !== DEFAULT_PRODUCT_SERVICE_IMAGE);
+
+        const candidateImg = uploadedUrl !== null ? uploadedUrl : rawImg;
+        let normalizedImg = undefined;
+
+        if (candidateImg !== undefined) {
+            // A new image was sent (file, base64, or string URL)
+            if (!candidateImg || typeof candidateImg !== 'string' || !candidateImg.trim()) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Product image is required.',
+                    message: 'Product image is required.',
+                    code: 'VALIDATION_ERROR',
+                    errors: {
+                        image_url: 'Product image is required.'
+                    }
+                });
+            }
+            normalizedImg = await resolveImageUrl(candidateImg, null);
+            if (!normalizedImg || normalizedImg === DEFAULT_PRODUCT_SERVICE_IMAGE) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Product image is required.',
+                    message: 'Product image is required.',
+                    code: 'VALIDATION_ERROR',
+                    errors: {
+                        image_url: 'Product image is required.'
+                    }
+                });
+            }
+        } else if (!existingHasValidImage) {
+            // Existing item has no image (or default placeholder), and no image was provided when saving
+            return res.status(400).json({
+                success: false,
+                error: 'Product image is required.',
+                message: 'Product image is required.',
+                code: 'VALIDATION_ERROR',
+                errors: {
+                    image_url: 'Product image is required.'
+                }
+            });
+        }
 
         // Dynamic SQL builder to update ONLY provided fields
         const fields = [];
@@ -385,7 +482,7 @@ async function updateItem(req, res) {
         res.status(200).json({
             success: true,
             message: 'Item updated successfully',
-            image_url: updatedItem?.image_url || normalizedImg,
+            image_url: updatedItem?.image_url || normalizedImg || existingItem.image_url,
             item: updatedItem
         });
     } catch (err) {
@@ -417,14 +514,30 @@ async function updateItemImage(req, res) {
             }
         }
 
-        if (!imageUrl) {
+        if (!imageUrl || typeof imageUrl !== 'string' || !imageUrl.trim()) {
             return res.status(400).json({
-                error: 'No image provided. Please send a file via multipart form-data (field: file, image, or photo), base64 string, or image_url string.',
-                code: 'NO_IMAGE_PROVIDED'
+                success: false,
+                error: 'Product image is required.',
+                message: 'Product image is required.',
+                code: 'VALIDATION_ERROR',
+                errors: {
+                    image_url: 'Product image is required.'
+                }
             });
         }
 
-        const normalizedImg = await resolveImageUrl(imageUrl, DEFAULT_PRODUCT_SERVICE_IMAGE);
+        const normalizedImg = await resolveImageUrl(imageUrl, null);
+        if (!normalizedImg || normalizedImg === DEFAULT_PRODUCT_SERVICE_IMAGE) {
+            return res.status(400).json({
+                success: false,
+                error: 'Product image is required.',
+                message: 'Product image is required.',
+                code: 'VALIDATION_ERROR',
+                errors: {
+                    image_url: 'Product image is required.'
+                }
+            });
+        }
 
         const updateRes = await query(
             `UPDATE items SET image_url = ? WHERE item_id = ? AND (vendor_id = ? OR CAST(vendor_id AS TEXT) = ?) RETURNING *`,
