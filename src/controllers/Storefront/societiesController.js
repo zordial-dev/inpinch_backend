@@ -1,6 +1,7 @@
 const { query } = require('../../models/db');
 const memoryCache = require('../../utils/cache');
 const { performance } = require('perf_hooks');
+const { resolveSocietyId } = require('../../utils/societyContext');
 
 /**
  * A1. List Housing Societies (with Search & Filter)
@@ -226,20 +227,34 @@ async function getSocietyVendors(req, res) {
     const offset = (pageNum - 1) * limitNum;
 
     const startTime = performance.now();
-    const isAll = !id || String(id).toLowerCase() === 'all' || id === '0';
+    const targetSocId = await resolveSocietyId(req);
+
+    // Strict society isolation: Missing or invalid society context returns empty list, never leaks other societies
+    if (!targetSocId) {
+      if (isPaginated) {
+        return res.status(200).json({
+          success: true,
+          data: [],
+          meta: {
+            total_records: 0,
+            total_pages: 1,
+            current_page: pageNum,
+            page_size: limitNum,
+            has_next: false,
+            has_prev: false
+          }
+        });
+      }
+      return res.status(200).json([]);
+    }
 
     let sql = `
       SELECT v.*, s.society_name
       FROM vendors v
       LEFT JOIN societies s ON v.society_id = s.society_id
-      WHERE UPPER(v.status) = 'ACTIVE'
+      WHERE UPPER(v.status) = 'ACTIVE' AND v.society_id = ?
     `;
-    const params = [];
-
-    if (!isAll) {
-      sql += ` AND v.society_id = ?`;
-      params.push(id);
-    }
+    const params = [targetSocId];
 
     if (search) {
       sql += ` AND (LOWER(v.store_name) LIKE ? OR LOWER(v.vendor_name) LIKE ? OR LOWER(v.description) LIKE ? OR LOWER(s.society_name) LIKE ? OR LOWER(v.category) LIKE ?)`;

@@ -2,6 +2,7 @@ const { query } = require('../../models/db');
 const { generateTokens, comparePassword, hashPassword } = require('../../utils/auth');
 const { formatPhoneWithCountryCode, get10DigitPhone } = require('../../utils/phoneUtils');
 const { getVendorReapplicationDiffs } = require('../../services/vendorDiffService');
+const { resolveSocietyId } = require('../../utils/societyContext');
 
 function sendStandardError(res, statusCode, message, errorCode) {
   return res.status(statusCode).json({
@@ -328,16 +329,44 @@ async function listVendors(req, res) {
     const conditions = [];
     const params = [];
 
-    const targetSociety = society_id || societyId;
-    if (targetSociety) {
-      const rawSocStr = String(targetSociety).trim();
-      if (/^\d+$/.test(rawSocStr)) {
+    const reqUrl = String(req.originalUrl || req.baseUrl || req.url || '');
+    const isAdminPath = reqUrl.includes('/api/admin') || reqUrl.includes('/api/v1/admin');
+    const isAdminClient = req.headers['x-platform-client'] === 'admin_dashboard';
+    const isAdminAuth = req.user && ['super_admin', 'admin', 'sub_admin'].includes(String(req.user.role).toLowerCase());
+    const isExplicitAdminCall = isAdminPath || isAdminClient || isAdminAuth;
+
+    const targetSocId = await resolveSocietyId(req);
+
+    if (!isExplicitAdminCall) {
+      // Regular resident users and storefront clients can ONLY see ACTIVE vendors in their selected society
+      conditions.push(`UPPER(v.status) = 'ACTIVE'`);
+      if (targetSocId) {
         conditions.push(`v.society_id = ?`);
-        params.push(parseInt(rawSocStr, 10));
+        params.push(targetSocId);
       } else {
-        conditions.push(`(LOWER(s.society_name) LIKE ? OR LOWER(s.location) LIKE ?)`);
-        const q = `%${rawSocStr.toLowerCase()}%`;
-        params.push(q, q);
+        // Strict society isolation: Missing society context must return empty result, never leak all merchants
+        const emptyPagination = { total: 0, page: pageNum, limit: limitNum, total_pages: 1 };
+        return respond(res, 200, [], 'Please select a society to view available merchants.', emptyPagination);
+      }
+    } else {
+      if (targetSocId) {
+        conditions.push(`v.society_id = ?`);
+        params.push(targetSocId);
+      } else if (society_id || societyId) {
+        const rawSocStr = String(society_id || societyId).trim();
+        if (/^\d+$/.test(rawSocStr)) {
+          conditions.push(`v.society_id = ?`);
+          params.push(parseInt(rawSocStr, 10));
+        } else {
+          conditions.push(`(LOWER(s.society_name) LIKE ? OR LOWER(s.location) LIKE ?)`);
+          const q = `%${rawSocStr.toLowerCase()}%`;
+          params.push(q, q);
+        }
+      }
+
+      if (status && status !== 'all') {
+        conditions.push(`UPPER(COALESCE(v.status, 'ACTIVE')) = ?`);
+        params.push(status.toUpperCase());
       }
     }
 
@@ -352,20 +381,6 @@ async function listVendors(req, res) {
       conditions.push(`(LOWER(v.store_name) LIKE ? OR LOWER(v.vendor_name) LIKE ? OR LOWER(v.email) LIKE ? OR v.phone_number LIKE ? OR CAST(v.vendor_id AS TEXT) = ? OR LOWER(COALESCE(v.area, '')) LIKE ? OR LOWER(s.society_name) LIKE ?)`);
       const q = `%${search.toLowerCase()}%`;
       params.push(q, q, q, `%${search}%`, search, q, q);
-    }
-
-    const reqUrl = String(req.originalUrl || req.baseUrl || req.url || '');
-    const isAdminPath = reqUrl.includes('/api/admin') || reqUrl.includes('/api/v1/admin');
-    const isAdminClient = req.headers['x-platform-client'] === 'admin_dashboard';
-    const isAdminAuth = req.user && ['super_admin', 'admin', 'sub_admin'].includes(String(req.user.role).toLowerCase());
-    const isExplicitAdminCall = isAdminPath || isAdminClient || isAdminAuth;
-
-    if (!isExplicitAdminCall) {
-      // Regular resident users and storefront clients can ONLY see ACTIVE vendors
-      conditions.push(`UPPER(v.status) = 'ACTIVE'`);
-    } else if (status && status !== 'all') {
-      conditions.push(`UPPER(COALESCE(v.status, 'ACTIVE')) = ?`);
-      params.push(status.toUpperCase());
     }
 
     if (tier && tier !== 'all') {

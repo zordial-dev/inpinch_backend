@@ -42,7 +42,9 @@ const allowedCorsHeaders = [
     'Expires',
     'X-Requested-With',
     'x-vendor-id',
-    'x-user-id'
+    'x-user-id',
+    'x-society-id',
+    'x-society'
 ];
 
 app.use(cors({

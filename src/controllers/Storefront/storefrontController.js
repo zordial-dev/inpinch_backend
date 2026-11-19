@@ -2,13 +2,13 @@ const { query } = require('../../models/db');
 const { performance } = require('perf_hooks');
 const { normalizeImageUrl, DEFAULT_PRODUCT_SERVICE_IMAGE } = require('../../utils/imageUtils');
 const { maskAccountNumber, getVendorPaymentEligibility } = require('../../services/paymentEligibilityService');
+const { resolveSocietyId, isStorefrontCustomerRequest } = require('../../utils/societyContext');
 
 /**
  * GET /api/societies/:societyId/vendors - List ACTIVE vendors in a society
  */
 async function getSocietyVendorsStorefront(req, res) {
     try {
-        const { societyId } = req.params;
         const { search, page, limit } = req.query;
         const isPaginated = page !== undefined || limit !== undefined;
 
@@ -17,7 +17,26 @@ async function getSocietyVendorsStorefront(req, res) {
         const offset = (pageNum - 1) * limitNum;
 
         const startTime = performance.now();
-        const isAll = !societyId || String(societyId).toLowerCase() === 'all' || societyId === '0';
+        const targetSocId = await resolveSocietyId(req);
+
+        // Strict society isolation: If society ID is missing or invalid, return empty list (never expose other societies)
+        if (!targetSocId) {
+            if (isPaginated) {
+                return res.status(200).json({
+                    success: true,
+                    data: [],
+                    meta: {
+                        total_records: 0,
+                        total_pages: 1,
+                        current_page: pageNum,
+                        page_size: limitNum,
+                        has_next: false,
+                        has_prev: false
+                    }
+                });
+            }
+            return res.status(200).json([]);
+        }
 
         let sql = `SELECT v.vendor_id, v.society_id, v.vendor_name, v.gst_number, v.phone_number, v.email,
                           v.store_name, v.logo, v.shop_image, v.description, v.status, v.account_number, v.ifsc_code,
@@ -33,13 +52,8 @@ async function getSocietyVendorsStorefront(req, res) {
                           ) AS is_subscription_active
                     FROM vendors v
                     LEFT JOIN societies s ON v.society_id = s.society_id
-                    WHERE UPPER(v.status) = 'ACTIVE'`;
-        const params = [];
-
-        if (!isAll) {
-            sql += ` AND v.society_id = ?`;
-            params.push(societyId);
-        }
+                    WHERE UPPER(v.status) = 'ACTIVE' AND v.society_id = ?`;
+        const params = [targetSocId];
 
         if (search) {
             sql += ` AND (LOWER(v.store_name) LIKE ? OR LOWER(v.vendor_name) LIKE ? OR LOWER(v.description) LIKE ? OR LOWER(COALESCE(v.area, '')) LIKE ? OR LOWER(s.society_name) LIKE ?)`;
@@ -146,6 +160,16 @@ async function getVendorStorefront(req, res) {
         }
 
         const vendor = vendorResult.rows[0];
+
+        // Strict society isolation: Reject if requested under a different society context
+        const targetSocId = await resolveSocietyId(req);
+        if (targetSocId && Number(vendor.society_id) !== targetSocId) {
+            return res.status(404).json({
+                success: false,
+                error: `Vendor "${vendorIdParam}" not found in the selected society.`,
+                message: `Vendor "${vendorIdParam}" not found in the selected society.`
+            });
+        }
 
         // Strip private and sensitive merchant fields from public storefront responses
         const sensitiveMerchantFields = [
@@ -398,7 +422,8 @@ async function searchVendorsLocationAware(req, res) {
             page, limit
         } = req.query;
 
-        const targetArea = String(area || location || sector || sectorId || sector_id || user_sector || search || q || '').trim();
+        const targetArea = String(area || location || sector || sectorId || sector_id || user_sector || '').trim();
+        const searchTerm = String(search || q || '').trim();
         const targetCity = String(city || '').trim().toLowerCase();
         const targetState = String(state || '').trim().toLowerCase();
         const targetPincode = String(pincode || '').trim();
@@ -408,6 +433,29 @@ async function searchVendorsLocationAware(req, res) {
         const pageNum = Math.max(1, parseInt(page || 1, 10));
         const limitNum = Math.min(50, Math.max(1, parseInt(limit || 24, 10)));
         const offset = (pageNum - 1) * limitNum;
+
+        const targetSocId = await resolveSocietyId(req);
+
+        // Strict society isolation: Missing or invalid society context for storefront search must not expose all merchants
+        if (!targetSocId && isStorefrontCustomerRequest(req)) {
+            if (isPaginated) {
+                return res.status(200).json({
+                    success: true,
+                    count: 0,
+                    vendors: [],
+                    data: [],
+                    meta: {
+                        total_records: 0,
+                        total_pages: 1,
+                        current_page: pageNum,
+                        page_size: limitNum,
+                        has_next: false,
+                        has_prev: false
+                    }
+                });
+            }
+            return res.status(200).json({ success: true, count: 0, vendors: [], data: [] });
+        }
 
         let sql = `SELECT v.vendor_id, v.society_id, v.vendor_name, v.gst_number, v.phone_number, v.email,
                           v.store_name, v.logo, v.shop_image, v.description, v.status, v.account_number, v.ifsc_code,
@@ -427,16 +475,29 @@ async function searchVendorsLocationAware(req, res) {
                    WHERE UPPER(v.status) = 'ACTIVE'`;
         const params = [];
 
+        // Strict society matching (never substitute city/radius/proximity for exact society ID)
+        if (targetSocId) {
+            sql += ` AND v.society_id = ?`;
+            params.push(targetSocId);
+        }
+
         if (targetType === 'product' || targetType === 'service') {
             sql += ` AND LOWER(COALESCE(v.vendor_type, 'product')) = ?`;
             params.push(targetType);
         }
 
-        // Area text matching (e.g. "Sector 62" or "sitapura" matches v.area, v.location, etc.)
+        // Search within the society by merchant name, store name, category, or description
+        if (searchTerm) {
+            const sq = `%${searchTerm.toLowerCase()}%`;
+            sql += ` AND (LOWER(v.store_name) LIKE ? OR LOWER(v.vendor_name) LIKE ? OR LOWER(COALESCE(v.description, '')) LIKE ? OR LOWER(COALESCE(v.category, '')) LIKE ?)`;
+            params.push(sq, sq, sq, sq);
+        }
+
+        // Optional secondary area text matching
         if (targetArea) {
             const kw = `%${targetArea.toLowerCase()}%`;
-            sql += ` AND (LOWER(COALESCE(v.area, '')) LIKE ? OR LOWER(COALESCE(v.location, '')) LIKE ? OR LOWER(COALESCE(v.location_address, '')) LIKE ? OR LOWER(COALESCE(v.address, '')) LIKE ? OR LOWER(COALESCE(s.society_name, '')) LIKE ? OR LOWER(COALESCE(v.store_name, '')) LIKE ?)`;
-            params.push(kw, kw, kw, kw, kw, kw);
+            sql += ` AND (LOWER(COALESCE(v.area, '')) LIKE ? OR LOWER(COALESCE(v.location, '')) LIKE ? OR LOWER(COALESCE(v.location_address, '')) LIKE ? OR LOWER(COALESCE(v.address, '')) LIKE ? OR LOWER(COALESCE(s.society_name, '')) LIKE ?)`;
+            params.push(kw, kw, kw, kw, kw);
         }
 
         // City Filter
@@ -596,6 +657,7 @@ async function getItems(req, res) {
     try {
         const { vendor_id, vendorId, category, search, page, limit } = req.query || {};
         const targetVendorId = vendor_id || vendorId;
+        const targetSocId = await resolveSocietyId(req);
         const isPaginated = page !== undefined || limit !== undefined;
         const pageNum = Math.max(1, parseInt(page || 1, 10));
         const limitNum = Math.min(100, Math.max(1, parseInt(limit || 50, 10)));
@@ -604,12 +666,18 @@ async function getItems(req, res) {
         let sql = `
             SELECT i.item_id, i.vendor_id, i.item_name, i.price, i.category, i.description, 
                    i.image_url, i.in_stock, i.stock, i.unit, i.is_available, i.created_at,
-                   v.store_name, v.vendor_name, v.category as vendor_category, v.status as vendor_status
+                   v.store_name, v.vendor_name, v.category as vendor_category, v.status as vendor_status,
+                   v.society_id
             FROM items i
             LEFT JOIN vendors v ON i.vendor_id = v.vendor_id
             WHERE i.in_stock = TRUE AND (v.status IS NULL OR UPPER(v.status) = 'ACTIVE')
         `;
         const params = [];
+
+        if (targetSocId) {
+            sql += ` AND v.society_id = ?`;
+            params.push(targetSocId);
+        }
 
         if (targetVendorId) {
             sql += ` AND (i.vendor_id = ? OR CAST(i.vendor_id AS TEXT) = ?)`;
@@ -699,7 +767,7 @@ async function getItemOrProductById(req, res, next) {
 
         // 1. First, check if this ID is an item in the items table
         const itemRes = await query(
-            `SELECT i.*, v.store_name, v.vendor_name, v.phone_number as vendor_phone, v.address as vendor_address, v.status as vendor_status
+            `SELECT i.*, v.store_name, v.vendor_name, v.phone_number as vendor_phone, v.address as vendor_address, v.status as vendor_status, v.society_id
              FROM items i
              LEFT JOIN vendors v ON i.vendor_id = v.vendor_id
              WHERE i.item_id = ? OR CAST(i.item_id AS TEXT) = ?`,
@@ -708,6 +776,10 @@ async function getItemOrProductById(req, res, next) {
 
         if (itemRes.rows && itemRes.rows.length > 0) {
             const i = itemRes.rows[0];
+            const targetSocId = await resolveSocietyId(req);
+            if (targetSocId && i.society_id && Number(i.society_id) !== targetSocId) {
+                return res.status(404).json({ success: false, error: 'Product not found in the selected society' });
+            }
             const finalImg = typeof normalizeImageUrl === 'function' ? normalizeImageUrl(i.image_url, DEFAULT_PRODUCT_SERVICE_IMAGE) : (i.image_url || DEFAULT_PRODUCT_SERVICE_IMAGE);
             const stockNum = i.stock !== null && i.stock !== undefined ? Math.max(0, Number(i.stock)) : 0;
             const isAvail = (i.is_available === true || i.is_available === 1 || i.is_available === '1' || i.is_available === null || i.is_available === undefined);
