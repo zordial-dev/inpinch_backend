@@ -3,6 +3,7 @@ const fs = require('fs');
 const { query } = require('../../models/db');
 const { resolveImageUrl, normalizeImageUrl, DEFAULT_PRODUCT_SERVICE_IMAGE } = require('../../utils/imageUtils');
 const { formatISTISO, formatISTReadable } = require('../../utils/time');
+const { resolveSocietyId } = require('../../utils/societyContext');
 
 /**
  * Helper: Resolve Base URL from Request
@@ -617,19 +618,26 @@ async function getAllServices(req, res) {
     try {
         const { vendor_id, vendorId, category, search, page, limit } = req.query || {};
         const targetVendorId = vendor_id || vendorId;
+        const targetSocId = await resolveSocietyId(req);
         const isPaginated = page !== undefined || limit !== undefined;
         const pageNum = Math.max(1, parseInt(page || 1, 10));
         const limitNum = Math.min(100, Math.max(1, parseInt(limit || 50, 10)));
         const offset = (pageNum - 1) * limitNum;
 
         let sql = `
-            SELECT s.*, v.store_name, v.vendor_name, v.category as vendor_category, v.status as vendor_status
+            SELECT s.*, v.store_name, v.vendor_name, v.category as vendor_category, v.status as vendor_status,
+                   v.society_id
             FROM services s
             LEFT JOIN vendors v ON s.vendor_id = v.vendor_id
             WHERE (s.is_available = TRUE OR s.is_available IS NULL)
               AND (v.status IS NULL OR UPPER(v.status) = 'ACTIVE')
         `;
         const params = [];
+
+        if (targetSocId) {
+            sql += ` AND v.society_id = ?`;
+            params.push(targetSocId);
+        }
 
         if (targetVendorId) {
             sql += ` AND (s.vendor_id = ? OR CAST(s.vendor_id AS TEXT) = ?)`;

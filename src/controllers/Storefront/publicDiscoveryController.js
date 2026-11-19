@@ -3,6 +3,7 @@
 const { query } = require('../../models/db');
 const { normalizeImageUrl, DEFAULT_PRODUCT_SERVICE_IMAGE } = require('../../utils/imageUtils');
 const { maskAccountNumber, getVendorPaymentEligibility } = require('../../services/paymentEligibilityService');
+const { resolveSocietyId } = require('../../utils/societyContext');
 
 /**
  * Builds a direct WhatsApp order/inquiry URL for a product or service.
@@ -606,6 +607,12 @@ async function getStoresByCategory(req, res) {
     ];
     let queryParams = [...eligibleNames, ...eligibleNames, ...eligibleNames];
 
+    const targetSocId = await resolveSocietyId(req);
+    if (targetSocId) {
+      whereConditions.push('v.society_id = ?');
+      queryParams.push(targetSocId);
+    }
+
     if (cityFilter) {
       whereConditions.push(`(
         LOWER(TRIM(COALESCE(v.city, ''))) = LOWER(TRIM(?))
@@ -922,6 +929,7 @@ async function discover(req, res) {
     }
 
     const cityName = cityRecord?.name || null;
+    const targetSocId = await resolveSocietyId(req);
 
     // Build Product Query
     const shouldFetchProducts = listingType === 'all' || listingType === 'product';
@@ -931,6 +939,10 @@ async function discover(req, res) {
     let productParams = [];
     if (shouldFetchProducts) {
       let pWhere = ["UPPER(v.status) = 'ACTIVE'"];
+      if (targetSocId) {
+        pWhere.push(`v.society_id = $${productParams.length + 1}`);
+        productParams.push(targetSocId);
+      }
       if (cityName) {
         pWhere.push(`(LOWER(TRIM(COALESCE(v.city, ''))) = LOWER(TRIM($${productParams.length + 1})) OR LOWER(TRIM(COALESCE(soc.city, ''))) = LOWER(TRIM($${productParams.length + 1})))`);
         productParams.push(cityName);
@@ -986,6 +998,10 @@ async function discover(req, res) {
     let serviceParams = [];
     if (shouldFetchServices) {
       let sWhere = ["UPPER(v.status) = 'ACTIVE'"];
+      if (targetSocId) {
+        sWhere.push(`v.society_id = $${serviceParams.length + 1}`);
+        serviceParams.push(targetSocId);
+      }
       if (cityName) {
         sWhere.push(`(LOWER(TRIM(COALESCE(v.city, ''))) = LOWER(TRIM($${serviceParams.length + 1})) OR LOWER(TRIM(COALESCE(soc.city, ''))) = LOWER(TRIM($${serviceParams.length + 1})))`);
         serviceParams.push(cityName);
@@ -1158,7 +1174,7 @@ async function getProductById(req, res) {
         v.store_name, v.vendor_name, v.owner_name, v.phone_number, v.whatsapp_number,
         v.city AS merchant_city, v.area AS merchant_area, v.address AS merchant_address,
         v.shop_image, v.opening_time, v.closing_time, v.status AS merchant_status,
-        soc.society_name, soc.city AS society_city
+        v.society_id, soc.society_name, soc.city AS society_city
       FROM items i
       JOIN vendors v ON i.vendor_id = v.vendor_id
       LEFT JOIN societies soc ON v.society_id = soc.society_id
@@ -1174,6 +1190,16 @@ async function getProductById(req, res) {
     }
 
     const row = result.rows[0];
+
+    // Strict society isolation: Reject if requested under a different society context
+    const targetSocId = await resolveSocietyId(req);
+    if (targetSocId && Number(row.society_id) !== targetSocId) {
+      return res.status(404).json({
+        success: false,
+        message: `Product #${id} not found in the selected society`,
+        data: null
+      });
+    }
     const finalImage = typeof normalizeImageUrl === 'function'
       ? normalizeImageUrl(row.image_url, DEFAULT_PRODUCT_SERVICE_IMAGE)
       : (row.image_url || DEFAULT_PRODUCT_SERVICE_IMAGE);
@@ -1247,7 +1273,7 @@ async function getServiceById(req, res) {
         v.store_name, v.vendor_name, v.phone_number, v.whatsapp_number,
         v.city AS merchant_city, v.area AS merchant_area, v.address AS merchant_address,
         v.shop_image, v.opening_time, v.closing_time, v.status AS merchant_status,
-        soc.society_name, soc.city AS society_city
+        v.society_id, soc.society_name, soc.city AS society_city
       FROM services srv
       JOIN vendors v ON srv.vendor_id = v.vendor_id
       LEFT JOIN societies soc ON v.society_id = soc.society_id
@@ -1263,6 +1289,16 @@ async function getServiceById(req, res) {
     }
 
     const row = result.rows[0];
+
+    // Strict society isolation: Reject if requested under a different society context
+    const targetSocId = await resolveSocietyId(req);
+    if (targetSocId && Number(row.society_id) !== targetSocId) {
+      return res.status(404).json({
+        success: false,
+        message: `Service #${id} not found in the selected society`,
+        data: null
+      });
+    }
     const finalImage = typeof normalizeImageUrl === 'function'
       ? normalizeImageUrl(row.image_url, DEFAULT_PRODUCT_SERVICE_IMAGE)
       : (row.image_url || DEFAULT_PRODUCT_SERVICE_IMAGE);
@@ -1359,6 +1395,16 @@ async function getMerchantById(req, res) {
     }
 
     const vendor = result.rows[0];
+
+    // Strict society isolation: Reject if requested under a different society context
+    const targetSocId = await resolveSocietyId(req);
+    if (targetSocId && Number(vendor.society_id) !== targetSocId) {
+      return res.status(404).json({
+        success: false,
+        message: `Store '${id}' not found in the selected society`,
+        data: null
+      });
+    }
     const rawImage = vendor.logo || vendor.shop_image || null;
     const finalImage = rawImage
       ? (typeof normalizeImageUrl === 'function' ? normalizeImageUrl(rawImage) : rawImage)
@@ -1568,7 +1614,7 @@ async function getStoreProducts(req, res) {
 
     // Verify store exists and is ACTIVE
     const storeRes = await query(
-      `SELECT vendor_id, store_name, vendor_name, status, phone_number, whatsapp_number 
+      `SELECT vendor_id, store_name, vendor_name, status, phone_number, whatsapp_number, society_id 
        FROM vendors 
        WHERE (CAST(vendor_id AS TEXT) = ? OR LOWER(store_name) = LOWER(?)) 
          AND UPPER(status) = 'ACTIVE' 
@@ -1585,6 +1631,16 @@ async function getStoreProducts(req, res) {
     }
 
     const store = storeRes.rows[0];
+
+    // Strict society isolation: Reject if requested under a different society context
+    const targetSocId = await resolveSocietyId(req);
+    if (targetSocId && store.society_id && Number(store.society_id) !== targetSocId) {
+      return res.status(404).json({
+        success: false,
+        message: `Store '${storeIdParam}' not found in the selected society`,
+        data: []
+      });
+    }
     const vendorId = store.vendor_id;
 
     let whereConditions = ['vendor_id = ?'];
@@ -1698,7 +1754,7 @@ async function getStoreServices(req, res) {
 
     // Verify store exists and is ACTIVE
     const storeRes = await query(
-      `SELECT vendor_id, store_name, vendor_name, status, phone_number, whatsapp_number 
+      `SELECT vendor_id, store_name, vendor_name, status, phone_number, whatsapp_number, society_id 
        FROM vendors 
        WHERE (CAST(vendor_id AS TEXT) = ? OR LOWER(store_name) = LOWER(?)) 
          AND UPPER(status) = 'ACTIVE' 
@@ -1715,6 +1771,16 @@ async function getStoreServices(req, res) {
     }
 
     const store = storeRes.rows[0];
+
+    // Strict society isolation: Reject if requested under a different society context
+    const targetSocId = await resolveSocietyId(req);
+    if (targetSocId && store.society_id && Number(store.society_id) !== targetSocId) {
+      return res.status(404).json({
+        success: false,
+        message: `Store '${storeIdParam}' not found in the selected society`,
+        data: []
+      });
+    }
     const vendorId = store.vendor_id;
 
     let whereConditions = ['vendor_id = ?'];
