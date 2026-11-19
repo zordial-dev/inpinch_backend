@@ -179,12 +179,14 @@ async function addService(req, res) {
 
         // Verify vendor exists
         const vCheck = await query(
-            `SELECT vendor_id, vendor_name, store_name, vendor_type FROM vendors WHERE vendor_id = ? OR CAST(vendor_id AS TEXT) = ?`,
+            `SELECT vendor_id, vendor_name, store_name, vendor_type, category FROM vendors WHERE vendor_id = ? OR CAST(vendor_id AS TEXT) = ?`,
             [vendorId, String(vendorId)]
         );
         if (!vCheck.rows || vCheck.rows.length === 0) {
             return res.status(404).json({ success: false, error: `Vendor with ID ${vendorId} not found` });
         }
+
+        const merchantCategory = vCheck.rows[0].category;
 
         const body = req.body || {};
         const serviceName = String(
@@ -198,7 +200,18 @@ async function addService(req, res) {
             });
         }
 
-        const category = String(body.category || 'Electrician & Repairs').trim();
+        // Permanent Merchant Category Lock:
+        // Services must automatically use the merchant's registered category.
+        // Reject any attempt to submit a different category.
+        if (body.category && merchantCategory && String(body.category).trim().toLowerCase() !== String(merchantCategory).trim().toLowerCase()) {
+            return res.status(400).json({
+                success: false,
+                error: `Merchant category is permanently locked to "${merchantCategory}". Services cannot be added under a different category.`,
+                message: `Merchant category is permanently locked to "${merchantCategory}". Services cannot be added under a different category.`
+            });
+        }
+
+        const category = merchantCategory || String(body.category || 'Electrician & Repairs').trim();
         const price = Math.max(0, parseFloat(body.price ?? body.service_price ?? 0) || 0);
         const visitingCharge = Math.max(0, parseFloat(body.visiting_charge ?? body.visitingCharge ?? body.visiting_fee ?? body.inspection_charge ?? 0) || 0);
         const estimatedDuration = String(body.estimated_duration || body.estimatedDuration || body.duration || '1 hour').trim();
@@ -382,6 +395,21 @@ async function updateService(req, res) {
 
         const existing = existingRes.rows[0];
         const body = req.body || {};
+
+        if (body.category !== undefined) {
+            const vCatRes = await query(
+                `SELECT category FROM vendors WHERE vendor_id = ? OR CAST(vendor_id AS TEXT) = ?`,
+                [existing.vendor_id, String(existing.vendor_id)]
+            );
+            const merchantCategory = vCatRes.rows?.[0]?.category;
+            if (merchantCategory && String(body.category).trim().toLowerCase() !== String(merchantCategory).trim().toLowerCase()) {
+                return res.status(400).json({
+                    success: false,
+                    error: `Merchant category is permanently locked to "${merchantCategory}". You cannot change service category to a different category.`,
+                    message: `Merchant category is permanently locked to "${merchantCategory}". You cannot change service category to a different category.`
+                });
+            }
+        }
 
         const serviceName = (body.service_name ?? body.serviceName ?? body.name ?? body.title) !== undefined
             ? String(body.service_name ?? body.serviceName ?? body.name ?? body.title).trim()

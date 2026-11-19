@@ -311,11 +311,71 @@ class VendorService {
     const finalVendorType = vendor_type || '';
     const finalLocationType = location_type || '';
 
-    // Check if new phone number is already taken by another vendor
+    // Fetch prior vendor data to inspect current locked fields
+    const currentRes = await query(`SELECT * FROM vendors WHERE vendor_id = ? OR public_id = ?`, [numId, rawIdStr]);
+    const currentVendor = currentRes.rows && currentRes.rows.length > 0 ? currentRes.rows[0] : {};
+
+    // 1. Permanent Merchant Type Lock: cannot be changed after registration
+    if (vendor_type !== undefined && vendor_type !== null && String(vendor_type).trim() !== '') {
+      const incomingType = String(vendor_type).trim().toLowerCase();
+      const currentType = String(currentVendor.vendor_type || 'product').trim().toLowerCase();
+      if (incomingType !== currentType) {
+        throw new Error('Merchant type is permanently locked and cannot be changed after registration.');
+      }
+    }
+
+    // 2. Permanent Merchant Category Lock: cannot be changed after registration
+    if (category !== undefined && category !== null && String(category).trim() !== '') {
+      const incomingCat = String(category).trim().toLowerCase();
+      const currentCat = String(currentVendor.category || '').trim().toLowerCase();
+      if (currentCat && incomingCat !== currentCat) {
+        throw new Error('Merchant category is permanently locked and cannot be changed after registration.');
+      }
+    }
+
+    // 3. Mobile Number Update through Settings with validation & verification
     if (finalPhone) {
-      const existing = await query(`SELECT vendor_id FROM vendors WHERE phone_number = ? AND vendor_id != ? AND public_id != ?`, [finalPhone, numId, rawIdStr]);
-      if (existing.rows && existing.rows.length > 0) {
-        throw new Error('This phone number is already registered to another vendor.');
+      const cleanedDigits = finalPhone.replace(/\D/g, '');
+      const last10 = cleanedDigits.slice(-10);
+      if (cleanedDigits.length < 10 || last10.length !== 10) {
+        throw new Error('Invalid mobile number format. Please provide a valid 10-digit mobile number.');
+      }
+
+      const currentPhoneDigits = String(currentVendor.phone_number || '').replace(/\D/g, '').slice(-10);
+      if (last10 !== currentPhoneDigits) {
+        // Check duplicate across vendors
+        const existingVendor = await query(
+          `SELECT vendor_id FROM vendors 
+           WHERE (phone_number = ? OR RIGHT(REGEXP_REPLACE(phone_number, '\\D', '', 'g'), 10) = ?) 
+             AND vendor_id != ? AND public_id != ?`,
+          [finalPhone, last10, numId, rawIdStr]
+        );
+        if (existingVendor.rows && existingVendor.rows.length > 0) {
+          throw new Error('This phone number is already registered to another vendor.');
+        }
+
+        // Check duplicate across users
+        const existingUser = await query(
+          `SELECT user_id FROM users 
+           WHERE (phone = ? OR RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 10) = ?)
+             AND NOT (user_id LIKE 'usr_v_%')`,
+          [finalPhone, last10]
+        );
+        if (existingUser.rows && existingUser.rows.length > 0) {
+          throw new Error('This phone number is already registered to another account.');
+        }
+
+        // Verification check
+        const otpCode = settings.otp || settings.otp_code || settings.code;
+        if (otpCode) {
+          const { verifyOTP } = require('../utils/auth');
+          const otpResult = verifyOTP(last10, otpCode);
+          if (!otpResult.valid) {
+            throw new Error(otpResult.reason || 'Invalid or expired OTP for mobile number verification.');
+          }
+        } else if (settings.is_verified !== true && settings.verified !== true && !settings._skip_otp_check) {
+          throw new Error('OTP verification is required to update mobile number.');
+        }
       }
     }
 
@@ -377,10 +437,6 @@ class VendorService {
         console.error('Error processing logo base64 in updateStoreSettings:', err.message);
       }
     }
-
-    // Fetch prior vendor data to record diff
-    const currentRes = await query(`SELECT * FROM vendors WHERE vendor_id = ? OR public_id = ?`, [numId, rawIdStr]);
-    const currentVendor = currentRes.rows && currentRes.rows.length > 0 ? currentRes.rows[0] : {};
 
     if (currentVendor && currentVendor.vendor_id) {
       await recordVendorFieldChanges(currentVendor.vendor_id, currentVendor, settings);
@@ -450,7 +506,7 @@ class VendorService {
         finalPincode,
         finalShopNumber,
         finalShopNumber,
-        finalCategory,
+        currentVendor.category || finalCategory,
         finalBankName,
         finalAccountNumber,
         finalAccountNumber,
@@ -462,7 +518,7 @@ class VendorService {
         finalClosing,
         finalWorkingDays,
         finalBusinessType,
-        finalVendorType,
+        currentVendor.vendor_type || 'product',
         min_order_value !== undefined ? Number(min_order_value) : null,
         max_quantity_limit !== undefined ? Number(max_quantity_limit) : null,
         delivery_charge !== undefined ? Number(delivery_charge) : null,
