@@ -241,7 +241,7 @@ async function addItem(req, res) {
         const { vendorId } = req.params;
 
         // Verify if vendor is allowed to add catalog items (Product vs Service split)
-        const vendorCheck = await query(`SELECT vendor_type, can_add_items FROM vendors WHERE vendor_id = ? OR CAST(vendor_id AS TEXT) = ?`, [vendorId, String(vendorId)]);
+        const vendorCheck = await query(`SELECT vendor_type, can_add_items, category FROM vendors WHERE vendor_id = ? OR CAST(vendor_id AS TEXT) = ?`, [vendorId, String(vendorId)]);
         if (vendorCheck.rows && vendorCheck.rows.length > 0) {
             const v = vendorCheck.rows[0];
             if (v.can_add_items === false || v.vendor_type === 'service') {
@@ -249,6 +249,17 @@ async function addItem(req, res) {
                     error: 'Item catalog is disabled for Service Providers. Service requests are managed via the Service Enquiries panel.',
                     can_add_items: false,
                     vendor_type: v.vendor_type
+                });
+            }
+
+            // Permanent Merchant Category Lock:
+            // Items must automatically use the merchant's registered category.
+            // Reject any attempt to submit a different category.
+            if (req.body?.category && v.category && String(req.body.category).trim().toLowerCase() !== String(v.category).trim().toLowerCase()) {
+                return res.status(400).json({
+                    success: false,
+                    error: `Merchant category is permanently locked to "${v.category}". Items cannot be added under a different category.`,
+                    message: `Merchant category is permanently locked to "${v.category}". Items cannot be added under a different category.`
                 });
             }
         }
@@ -309,10 +320,13 @@ async function addItem(req, res) {
             });
         }
 
+        const merchantRegisteredCat = vendorCheck.rows?.[0]?.category;
+        const finalItemCat = merchantRegisteredCat || category || 'General';
+
         const result = await query(
             `INSERT INTO items (vendor_id, item_name, description, price, stock, category, unit, is_available, image_url) 
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING item_id, image_url`,
-            [vendorId, item_name, description || '', price, stock || 50, category || 'General', unit || 'piece', avail, normalizedImg]
+            [vendorId, item_name, description || '', price, stock || 50, finalItemCat, unit || 'piece', avail, normalizedImg]
         );
 
         const insertedId = result.rows && result.rows[0] ? result.rows[0].item_id : result.insertId;
@@ -447,8 +461,17 @@ async function updateItem(req, res) {
             }
         }
         if (category !== undefined) {
+            const vCatRes = await query(`SELECT category FROM vendors WHERE vendor_id = ? OR CAST(vendor_id AS TEXT) = ?`, [vendorId, String(vendorId)]);
+            const merchantCat = vCatRes.rows?.[0]?.category;
+            if (merchantCat && String(category).trim().toLowerCase() !== String(merchantCat).trim().toLowerCase()) {
+                return res.status(400).json({
+                    success: false,
+                    error: `Merchant category is permanently locked to "${merchantCat}". You cannot change item category to a different category.`,
+                    message: `Merchant category is permanently locked to "${merchantCat}". You cannot change item category to a different category.`
+                });
+            }
             fields.push('category = ?');
-            params.push(category);
+            params.push(merchantCat || category);
         }
         if (unit !== undefined) {
             fields.push('unit = ?');
@@ -636,7 +659,7 @@ async function toggleAvailability(req, res) {
  */
 async function updateSettings(req, res) {
     try {
-        const { vendorId } = req.params;
+        const vendorId = req.params.vendorId || req.params.id || req.user?.vendor_id || req.user?.id;
         const file = req.file || (req.files && req.files.length > 0 ? req.files[0] : null);
         if (file) {
             const baseUrl = getBaseUrl(req);
@@ -658,7 +681,13 @@ async function updateSettings(req, res) {
         });
     } catch (err) {
         console.error('Error updating settings:', err);
-        res.status(500).json({ error: err.message || 'Failed to update store settings' });
+        const errMsg = err.message || 'Failed to update store settings';
+        const isClientError = errMsg.includes('permanently locked') || 
+                              errMsg.includes('already registered') || 
+                              errMsg.includes('Invalid') || 
+                              errMsg.includes('OTP');
+        const statusCode = isClientError ? 400 : 500;
+        res.status(statusCode).json({ success: false, error: errMsg, message: errMsg });
     }
 }
 
@@ -1073,6 +1102,111 @@ async function updateItemStock(req, res) {
     }
 }
 
+/**
+ * POST /api/vendorPanel/:vendorId/phone/send-otp
+ * Dispatches an OTP to verify a new mobile number before updating settings.
+ */
+async function sendPhoneUpdateOtp(req, res) {
+    try {
+        const { vendorId } = req.params;
+        const { phone, phone_number, mobile, new_phone } = req.body || {};
+        const targetPhone = String(new_phone || phone_number || phone || mobile || '').trim();
+        if (!targetPhone) {
+            return res.status(400).json({ success: false, error: 'New mobile number is required.', message: 'New mobile number is required.' });
+        }
+        const digits = targetPhone.replace(/\D/g, '');
+        const last10 = digits.slice(-10);
+        if (digits.length < 10 || last10.length !== 10) {
+            return res.status(400).json({ success: false, error: 'Invalid mobile number format. Please provide a valid 10-digit mobile number.', message: 'Invalid mobile number format. Please provide a valid 10-digit mobile number.' });
+        }
+
+        // Check if same as current phone
+        const curRes = await query(`SELECT phone_number FROM vendors WHERE vendor_id = ? OR CAST(vendor_id AS TEXT) = ?`, [vendorId, String(vendorId)]);
+        if (curRes.rows && curRes.rows.length > 0) {
+            const curDigits = String(curRes.rows[0].phone_number || '').replace(/\D/g, '').slice(-10);
+            if (curDigits === last10) {
+                return res.status(400).json({ success: false, error: 'New mobile number cannot be the same as your current mobile number.', message: 'New mobile number cannot be the same as your current mobile number.' });
+            }
+        }
+
+        // Check duplicate across vendors
+        const existingVendor = await query(
+            `SELECT vendor_id FROM vendors WHERE (phone_number = ? OR RIGHT(REGEXP_REPLACE(phone_number, '\\D', '', 'g'), 10) = ?) AND vendor_id != ? AND CAST(vendor_id AS TEXT) != ?`,
+            [targetPhone, last10, vendorId, String(vendorId)]
+        );
+        if (existingVendor.rows && existingVendor.rows.length > 0) {
+            return res.status(400).json({ success: false, error: 'This phone number is already registered to another vendor.', message: 'This phone number is already registered to another vendor.' });
+        }
+
+        // Check duplicate across users
+        const existingUser = await query(
+            `SELECT user_id FROM users WHERE (phone = ? OR RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 10) = ?) AND NOT (user_id LIKE 'usr_v_%')`,
+            [targetPhone, last10]
+        );
+        if (existingUser.rows && existingUser.rows.length > 0) {
+            return res.status(400).json({ success: false, error: 'This phone number is already registered to another account.', message: 'This phone number is already registered to another account.' });
+        }
+
+        // Generate OTP
+        const { generateOTP } = require('../../utils/auth');
+        const otp = generateOTP(last10);
+
+        // Attempt SMS dispatch
+        try {
+            const { sendOTP: sendCentralOTP } = require('../../services/messageCentralService');
+            await sendCentralOTP(last10, '91', 'SMS', 6);
+        } catch (_) {}
+
+        return res.status(200).json({
+            success: true,
+            message: 'OTP sent successfully to new mobile number.',
+            phone: last10,
+            ...(process.env.NODE_ENV === 'test' ? { test_otp: otp } : {})
+        });
+    } catch (err) {
+        console.error('Error sending phone update OTP:', err);
+        return res.status(500).json({ success: false, error: err.message || 'Failed to send OTP.', message: err.message || 'Failed to send OTP.' });
+    }
+}
+
+/**
+ * PUT /api/vendorPanel/:vendorId/phone
+ * Updates mobile number after verifying OTP through the authenticated Settings flow.
+ */
+async function updatePhone(req, res) {
+    try {
+        const { vendorId } = req.params;
+        const { phone, phone_number, mobile, new_phone, otp, code } = req.body || {};
+        const targetPhone = String(new_phone || phone_number || phone || mobile || '').trim();
+        const targetOtp = String(otp || code || '').trim();
+
+        if (!targetPhone) {
+            return res.status(400).json({ success: false, error: 'New mobile number is required.', message: 'New mobile number is required.' });
+        }
+
+        const result = await vendorService.updateStoreSettings(vendorId, {
+            phone_number: targetPhone,
+            otp: targetOtp
+        });
+
+        return res.status(200).json({
+            success: true,
+            message: 'Mobile number updated successfully.',
+            phone_number: result.vendor?.phone_number || targetPhone,
+            vendor: result.vendor
+        });
+    } catch (err) {
+        console.error('Error updating phone number:', err);
+        const errMsg = err.message || 'Failed to update mobile number.';
+        const isClientError = errMsg.includes('Invalid') || errMsg.includes('already registered') || errMsg.includes('OTP');
+        return res.status(isClientError ? 400 : 500).json({
+            success: false,
+            error: errMsg,
+            message: errMsg
+        });
+    }
+}
+
 module.exports = {
     updatePaymentDetails,
     uploadImage,
@@ -1086,6 +1220,8 @@ module.exports = {
     updateItemStock,
     deleteItem,
     updateSettings,
+    sendPhoneUpdateOtp,
+    updatePhone,
     renewSubscription,
     toggleAvailability,
     registerFcmToken,

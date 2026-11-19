@@ -289,7 +289,7 @@ async function registerVendor(req, res) {
                     society_id = COALESCE(?, society_id), area = COALESCE(NULLIF(?, ''), area),
                     status = 'PENDING', has_resubmitted = TRUE, resubmitted_at = CURRENT_TIMESTAMP
                  WHERE vendor_id = ?`,
-        [vendor_name, store_name, email, phone_number, hashedPassword, hashedPassword, gstin, pan_number, shop_number, shop_number, address || shop_number || area || vendorLocation || '', vendorLocation || resolvedSocName || area || '', vendorCity, vendorState, vendorPincode, shop_image, shop_image, category, account_number, account_number, ifsc_code, bank_name, account_holder_name, society_id, resolvedSocName || area, vendor_id]
+        [vendor_name, store_name, email, phone_number, hashedPassword, hashedPassword, gstin, pan_number, shop_number, shop_number, address || shop_number || area || vendorLocation || '', vendorLocation || resolvedSocName || area || '', vendorCity, vendorState, vendorPincode, shop_image, shop_image, existingVendor.category || category, account_number, account_number, ifsc_code, bank_name, account_holder_name, society_id, resolvedSocName || area, vendor_id]
       );
     } else {
       // Generate standardized Option B public_id (vnd@XXXX)
@@ -626,6 +626,37 @@ async function resubmitVendorRequest(req, res) {
     const currentVendor = currentRes.rows && currentRes.rows.length > 0 ? currentRes.rows[0] : {};
 
     if (currentVendor && currentVendor.vendor_id) {
+      // 1. Permanent Merchant Type Lock
+      if (body.vendor_type && currentVendor.vendor_type && String(body.vendor_type).trim().toLowerCase() !== String(currentVendor.vendor_type).trim().toLowerCase()) {
+        return res.status(400).json({
+          success: false,
+          error: 'Merchant type is permanently locked and cannot be changed.',
+          message: 'Merchant type is permanently locked and cannot be changed.'
+        });
+      }
+
+      // 2. Permanent Merchant Category Lock
+      if (body.category && currentVendor.category && String(body.category).trim().toLowerCase() !== String(currentVendor.category).trim().toLowerCase()) {
+        return res.status(400).json({
+          success: false,
+          error: 'Merchant category is permanently locked and cannot be changed.',
+          message: 'Merchant category is permanently locked and cannot be changed.'
+        });
+      }
+
+      // 3. Do not allow mobile number changes through registration-related profile update flows
+      if (body.phone_number && currentVendor.phone_number) {
+        const cleanNew = String(body.phone_number).replace(/\D/g, '').slice(-10);
+        const cleanOld = String(currentVendor.phone_number).replace(/\D/g, '').slice(-10);
+        if (cleanNew && cleanOld && cleanNew !== cleanOld) {
+          return res.status(400).json({
+            success: false,
+            error: 'Mobile number cannot be changed during profile resubmission. Mobile number can only be updated through the authenticated Settings flow.',
+            message: 'Mobile number cannot be changed during profile resubmission. Mobile number can only be updated through the authenticated Settings flow.'
+          });
+        }
+      }
+
       await recordVendorFieldChanges(currentVendor.vendor_id, currentVendor, body);
     }
 
@@ -643,7 +674,7 @@ async function resubmitVendorRequest(req, res) {
         has_resubmitted = TRUE,
         resubmitted_at = CURRENT_TIMESTAMP
       WHERE vendor_id = ? OR CAST(vendor_id AS TEXT) = ?
-    `, [body.store_name, body.vendor_name, body.phone_number, body.gstin, body.pan_number, body.area, body.city, body.pincode, vendorId, String(vendorId)]);
+    `, [body.store_name, body.vendor_name, currentVendor.phone_number || body.phone_number, body.gstin, body.pan_number, body.area, body.city, body.pincode, vendorId, String(vendorId)]);
 
     return res.status(200).json({
       vendor_id: Number(vendorId),

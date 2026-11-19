@@ -240,6 +240,11 @@ router.put(['/:vendorId/settings', '/:vendorId/profile', '/:vendorId'], upload.a
 router.post(['/:vendorId/settings', '/:vendorId/profile', '/:vendorId'], upload.any(), handleMulterError, authenticateToken, requireVendorOwner, validateRequest(updateSettingsSchema), vendorPanelController.updateSettings);
 router.patch(['/:vendorId/settings', '/:vendorId/profile', '/:vendorId'], upload.any(), handleMulterError, authenticateToken, requireVendorOwner, validateRequest(updateSettingsSchema), vendorPanelController.updateSettings);
 
+// Mobile Number Update Through Authenticated Settings Flow
+router.post(['/:vendorId/phone/send-otp', '/:vendorId/send-phone-otp'], authenticateToken, requireVendorOwner, vendorPanelController.sendPhoneUpdateOtp);
+router.put(['/:vendorId/phone', '/:vendorId/update-phone'], authenticateToken, requireVendorOwner, vendorPanelController.updatePhone);
+router.patch(['/:vendorId/phone', '/:vendorId/update-phone'], authenticateToken, requireVendorOwner, vendorPanelController.updatePhone);
+
 // PUT /api/vendorPanel/:vendorId/coverage
 router.put('/:vendorId/coverage', authenticateToken, requireVendorOwner, validateRequest(updateCoverageSchema), vendorPanelController.updateVendorCoverage);
 
