@@ -20,6 +20,15 @@ const categoryStoresQuerySchema = {
     search: z.string().trim().max(100, 'search term must not exceed 100 characters').optional(),
     q: z.string().trim().max(100, 'search query must not exceed 100 characters').optional(),
     city: z.string().trim().max(100, 'city must not exceed 100 characters').optional(),
+    type: z.enum(['all', 'product', 'service']).optional().default('all'),
+    society_id: z.union([
+      z.coerce.number().int().positive(),
+      z.string().trim()
+    ]).optional(),
+    societyId: z.union([
+      z.coerce.number().int().positive(),
+      z.string().trim()
+    ]).optional(),
     sort: z.enum(['rating', 'name', 'newest']).optional().default('rating')
   }).passthrough()
 };
