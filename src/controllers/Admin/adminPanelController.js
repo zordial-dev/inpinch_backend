@@ -338,15 +338,25 @@ async function listVendors(req, res) {
     const targetSocId = await resolveSocietyId(req);
 
     if (!isExplicitAdminCall) {
-      // Regular resident users and storefront clients can ONLY see ACTIVE vendors in their selected society
+      // Regular resident users and storefront clients can ONLY see ACTIVE vendors
       conditions.push(`UPPER(v.status) = 'ACTIVE'`);
       if (targetSocId) {
+        // Strict society-level filtering when society_id is provided
         conditions.push(`v.society_id = ?`);
         params.push(targetSocId);
       } else {
-        // Strict society isolation: Missing society context must return empty result, never leak all merchants
-        const emptyPagination = { total: 0, page: pageNum, limit: limitNum, total_pages: 1 };
-        return respond(res, 200, [], 'Please select a society to view available merchants.', emptyPagination);
+        // City-Wide Vendor Discovery:
+        // If city provided without society_id (or society_id=all with city): return active merchants across all societies in that city
+        // If both omitted: use configured default city (Jaipur)
+        const cityParam = (req.query?.city || '').trim();
+        const configuredDefaultCity = (process.env.DEFAULT_CITY || 'Jaipur').trim();
+        const effectiveCity = cityParam || configuredDefaultCity;
+
+        conditions.push(`(
+          LOWER(TRIM(COALESCE(v.city, ''))) = LOWER(TRIM(?))
+          OR LOWER(TRIM(COALESCE(s.city, ''))) = LOWER(TRIM(?))
+        )`);
+        params.push(effectiveCity, effectiveCity);
       }
     } else {
       if (targetSocId) {
@@ -357,11 +367,20 @@ async function listVendors(req, res) {
         if (/^\d+$/.test(rawSocStr)) {
           conditions.push(`v.society_id = ?`);
           params.push(parseInt(rawSocStr, 10));
-        } else {
+        } else if (rawSocStr.toLowerCase() !== 'all') {
           conditions.push(`(LOWER(s.society_name) LIKE ? OR LOWER(s.location) LIKE ?)`);
           const q = `%${rawSocStr.toLowerCase()}%`;
           params.push(q, q);
         }
+      }
+
+      if (req.query?.city) {
+        const adminCity = String(req.query.city).trim();
+        conditions.push(`(
+          LOWER(TRIM(COALESCE(v.city, ''))) = LOWER(TRIM(?))
+          OR LOWER(TRIM(COALESCE(s.city, ''))) = LOWER(TRIM(?))
+        )`);
+        params.push(adminCity, adminCity);
       }
 
       if (status && status !== 'all') {

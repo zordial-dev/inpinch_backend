@@ -4,6 +4,11 @@ const { query } = require('../../models/db');
 const { normalizeImageUrl, DEFAULT_PRODUCT_SERVICE_IMAGE } = require('../../utils/imageUtils');
 const { maskAccountNumber, getVendorPaymentEligibility } = require('../../services/paymentEligibilityService');
 const { resolveSocietyId } = require('../../utils/societyContext');
+const {
+  getEligibleCategoryNames,
+  getCanonicalSlugForAlias,
+  getKnownCategoryByIdOrSlug
+} = require('../../utils/categoryMapping');
 
 /**
  * Builds a direct WhatsApp order/inquiry URL for a product or service.
@@ -71,12 +76,14 @@ async function resolveCityRecord(cityParam) {
 }
 
 /**
- * Helper to resolve category record from ID or slug or name.
+ * Helper to resolve category record from ID or slug or name,
+ * with support for controlled legacy category aliases.
  */
 async function resolveCategoryRecord(categoryParam) {
   if (!categoryParam) return null;
   const val = String(categoryParam).trim();
 
+  // 1. Look up by numeric category_id
   if (/^\d+$/.test(val)) {
     const res = await query(
       `SELECT category_id, name, slug, type, parent_id, icon_url, image_url, display_order, is_active 
@@ -86,6 +93,7 @@ async function resolveCategoryRecord(categoryParam) {
     if (res.rows && res.rows.length > 0) return res.rows[0];
   }
 
+  // 2. Look up by exact slug or name
   const res = await query(
     `SELECT category_id, name, slug, type, parent_id, icon_url, image_url, display_order, is_active 
      FROM categories 
@@ -94,7 +102,38 @@ async function resolveCategoryRecord(categoryParam) {
     [val, val]
   ).catch(() => ({ rows: [] }));
 
-  return res.rows && res.rows.length > 0 ? res.rows[0] : null;
+  if (res.rows && res.rows.length > 0) return res.rows[0];
+
+  // 3. Controlled legacy alias lookup: map alias to canonical slug
+  const canonicalSlug = getCanonicalSlugForAlias(val);
+  if (canonicalSlug) {
+    const aliasRes = await query(
+      `SELECT category_id, name, slug, type, parent_id, icon_url, image_url, display_order, is_active 
+       FROM categories 
+       WHERE LOWER(slug) = LOWER(?) OR LOWER(name) = LOWER(?) 
+       LIMIT 1`,
+      [canonicalSlug, canonicalSlug]
+    ).catch(() => ({ rows: [] }));
+    if (aliasRes.rows && aliasRes.rows.length > 0) return aliasRes.rows[0];
+  }
+
+  // 4. Fallback for known standard category IDs
+  const fallbackCat = getKnownCategoryByIdOrSlug(val);
+  if (fallbackCat) {
+    return {
+      category_id: fallbackCat.category_id,
+      name: fallbackCat.name,
+      slug: fallbackCat.slug,
+      type: fallbackCat.type || 'all',
+      parent_id: fallbackCat.parent_id || null,
+      icon_url: fallbackCat.icon_url || null,
+      image_url: fallbackCat.image_url || null,
+      display_order: fallbackCat.display_order || 0,
+      is_active: true
+    };
+  }
+
+  return null;
 }
 
 /**
@@ -478,12 +517,8 @@ async function getCategoryById(req, res) {
       display_order: s.display_order || 0
     }));
 
-    // Collect all matching category names (category + subcategories)
-    const eligibleNames = [cat.name.toLowerCase(), cat.slug.toLowerCase()];
-    subcategories.forEach(s => {
-      eligibleNames.push(s.name.toLowerCase(), s.slug.toLowerCase());
-    });
-
+    // Collect all matching category names & controlled aliases (category + subcategories)
+    const eligibleNames = getEligibleCategoryNames(cat, subcategories);
     const catPlaceholders = eligibleNames.map(() => '?').join(', ');
 
     // Count eligible active stores in this category
@@ -564,7 +599,8 @@ async function getStoresByCategory(req, res) {
       search,
       q,
       city,
-      sort = 'rating'
+      sort = 'rating',
+      type = 'all'
     } = req.query;
 
     const pageNum = Math.max(1, parseInt(page, 10));
@@ -573,18 +609,15 @@ async function getStoresByCategory(req, res) {
     const offset = (pageNum - 1) * limitNum;
     const searchTerm = (search || q || '').trim();
     const cityFilter = (city || '').trim();
+    const typeFilter = String(type || 'all').trim().toLowerCase();
 
     // Gather child subcategories
     const subRes = await query(
-      `SELECT category_id, name, slug FROM categories WHERE parent_id = ? AND is_active = TRUE`,
+      `SELECT category_id, name, slug, type, parent_id FROM categories WHERE parent_id = ? AND is_active = TRUE`,
       [cat.category_id]
     ).catch(() => ({ rows: [] }));
 
-    const eligibleNames = [cat.name.toLowerCase(), cat.slug.toLowerCase()];
-    (subRes.rows || []).forEach(s => {
-      eligibleNames.push(s.name.toLowerCase(), s.slug.toLowerCase());
-    });
-
+    const eligibleNames = getEligibleCategoryNames(cat, subRes.rows || []);
     const catPlaceholders = eligibleNames.map(() => '?').join(', ');
 
     let whereConditions = [
@@ -606,6 +639,13 @@ async function getStoresByCategory(req, res) {
       )`
     ];
     let queryParams = [...eligibleNames, ...eligibleNames, ...eligibleNames];
+
+    // Explicit merchant type filter (default: 'all' returns both product and service merchants)
+    if (typeFilter === 'product') {
+      whereConditions.push("LOWER(COALESCE(v.vendor_type, 'product')) = 'product'");
+    } else if (typeFilter === 'service') {
+      whereConditions.push("LOWER(COALESCE(v.vendor_type, 'product')) = 'service'");
+    }
 
     const targetSocId = await resolveSocietyId(req);
     if (targetSocId) {
