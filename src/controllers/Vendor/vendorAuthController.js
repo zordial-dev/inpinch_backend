@@ -165,6 +165,31 @@ async function registerVendor(req, res) {
       }
     }
 
+    // Geolocation Latitude & Longitude Validation
+    const rawLatitude = body.latitude !== undefined ? body.latitude : (body.lat !== undefined ? body.lat : null);
+    const rawLongitude = body.longitude !== undefined ? body.longitude : (body.lng !== undefined ? body.lng : (body.lon !== undefined ? body.lon : null));
+
+    let validatedLatitude = null;
+    let validatedLongitude = null;
+
+    if (rawLatitude !== null && rawLatitude !== undefined && String(rawLatitude).trim() !== '') {
+      const numLat = Number(rawLatitude);
+      if (isNaN(numLat) || numLat < -90 || numLat > 90) {
+        fieldErrors.latitude = 'Invalid latitude value. Latitude must be a valid number between -90 and 90 degrees.';
+      } else {
+        validatedLatitude = numLat;
+      }
+    }
+
+    if (rawLongitude !== null && rawLongitude !== undefined && String(rawLongitude).trim() !== '') {
+      const numLon = Number(rawLongitude);
+      if (isNaN(numLon) || numLon < -180 || numLon > 180) {
+        fieldErrors.longitude = 'Invalid longitude value. Longitude must be a valid number between -180 and 180 degrees.';
+      } else {
+        validatedLongitude = numLon;
+      }
+    }
+
     // Return field-level errors if any validations failed
     if (Object.keys(fieldErrors).length > 0) {
       const firstError = Object.values(fieldErrors)[0];
@@ -275,6 +300,9 @@ async function registerVendor(req, res) {
     const kolkataISTNow = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Kolkata' }).replace(' ', 'T');
 
     let vendor_id = null;
+    let registeredLat = validatedLatitude;
+    let registeredLon = validatedLongitude;
+
     if (existingVendor) {
       // Update existing rejected/hold vendor record with new details and move to PENDING status
       vendor_id = Number(existingVendor.vendor_id);
@@ -287,9 +315,10 @@ async function registerVendor(req, res) {
                     account_number = ?, bank_account_number = ?, ifsc_code = ?,
                     bank_name = COALESCE(NULLIF(?, ''), bank_name), account_holder_name = COALESCE(NULLIF(?, ''), account_holder_name),
                     society_id = COALESCE(?, society_id), area = COALESCE(NULLIF(?, ''), area),
+                    latitude = COALESCE(?, latitude), longitude = COALESCE(?, longitude),
                     status = 'PENDING', has_resubmitted = TRUE, resubmitted_at = CURRENT_TIMESTAMP
                  WHERE vendor_id = ?`,
-        [vendor_name, store_name, email, phone_number, hashedPassword, hashedPassword, gstin, pan_number, shop_number, shop_number, address || shop_number || area || vendorLocation || '', vendorLocation || resolvedSocName || area || '', vendorCity, vendorState, vendorPincode, shop_image, shop_image, existingVendor.category || category, account_number, account_number, ifsc_code, bank_name, account_holder_name, society_id, resolvedSocName || area, vendor_id]
+        [vendor_name, store_name, email, phone_number, hashedPassword, hashedPassword, gstin, pan_number, shop_number, shop_number, address || shop_number || area || vendorLocation || '', vendorLocation || resolvedSocName || area || '', vendorCity, vendorState, vendorPincode, shop_image, shop_image, existingVendor.category || category, account_number, account_number, ifsc_code, bank_name, account_holder_name, society_id, resolvedSocName || area, validatedLatitude, validatedLongitude, vendor_id]
       );
     } else {
       // Generate standardized Option B public_id (vnd@XXXX)
@@ -297,12 +326,18 @@ async function registerVendor(req, res) {
 
       // Insert new vendor record
       const vendorRes = await query(
-        `INSERT INTO vendors (society_id, area, vendor_name, public_id, gst_number, gstin, pan_number, phone_number, email, password, password_hash, store_name, category, shop_number, shop_no, address, location, city, state, pincode, logo, shop_image, description, account_number, bank_account_number, ifsc_code, bank_name, account_holder_name, upi_id, qr_code, whatsapp_number, accepted_payment_methods, vendor_type, can_add_items, status, created_at) 
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?) RETURNING *`,
-        [society_id, resolvedSocName || area || vendorLocation || '', vendor_name, vendorPublicId, gstin, gstin, pan_number, phone_number, email || `${Date.now()}@vendor.inpinch`, hashedPassword, hashedPassword, store_name, category, shop_number, shop_number, address || shop_number || area || vendorLocation || '', vendorLocation || resolvedSocName || area || '', vendorCity, vendorState, vendorPincode, shop_image || '', shop_image || '', defaultDesc, account_number, account_number, ifsc_code, bank_name, account_holder_name, upi_id, qr_code, whatsapp_number, accepted_payment_methods, vendor_type, can_add_items, kolkataISTNow]
+        `INSERT INTO vendors (society_id, area, vendor_name, public_id, gst_number, gstin, pan_number, phone_number, email, password, password_hash, store_name, category, shop_number, shop_no, address, location, city, state, pincode, logo, shop_image, description, account_number, bank_account_number, ifsc_code, bank_name, account_holder_name, upi_id, qr_code, whatsapp_number, accepted_payment_methods, vendor_type, can_add_items, status, created_at, latitude, longitude) 
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?) RETURNING *`,
+        [society_id, resolvedSocName || area || vendorLocation || '', vendor_name, vendorPublicId, gstin, gstin, pan_number, phone_number, email || `${Date.now()}@vendor.inpinch`, hashedPassword, hashedPassword, store_name, category, shop_number, shop_number, address || shop_number || area || vendorLocation || '', vendorLocation || resolvedSocName || area || '', vendorCity, vendorState, vendorPincode, shop_image || '', shop_image || '', defaultDesc, account_number, account_number, ifsc_code, bank_name, account_holder_name, upi_id, qr_code, whatsapp_number, accepted_payment_methods, vendor_type, can_add_items, kolkataISTNow, validatedLatitude, validatedLongitude]
       );
       const newVendorRow = vendorRes.rows[0] || {};
       vendor_id = Number(newVendorRow.vendor_id || vendorRes.insertId);
+      if (newVendorRow.latitude !== undefined && newVendorRow.latitude !== null) {
+        registeredLat = Number(newVendorRow.latitude);
+      }
+      if (newVendorRow.longitude !== undefined && newVendorRow.longitude !== null) {
+        registeredLon = Number(newVendorRow.longitude);
+      }
     }
 
 
@@ -484,6 +519,8 @@ async function registerVendor(req, res) {
         accepted_payment_methods: body.accepted_payment_methods || eligiblePaymentMethods,
         vendor_type,
         can_add_items,
+        latitude: registeredLat !== null && registeredLat !== undefined ? Number(registeredLat) : null,
+        longitude: registeredLon !== null && registeredLon !== undefined ? Number(registeredLon) : null,
         status: 'PENDING'
       }
     });

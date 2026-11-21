@@ -23,6 +23,10 @@ function normalizeAuthPayload(data = {}) {
   if (normalized.gst_number !== undefined && normalized.gstin === undefined) normalized.gstin = normalized.gst_number;
   if (normalized.pan_number !== undefined && normalized.pan === undefined) normalized.pan = normalized.pan_number;
 
+  if (normalized.lat !== undefined && normalized.latitude === undefined) normalized.latitude = normalized.lat;
+  if (normalized.lng !== undefined && normalized.longitude === undefined) normalized.longitude = normalized.lng;
+  if (normalized.lon !== undefined && normalized.longitude === undefined) normalized.longitude = normalized.lon;
+
   return normalized;
 }
 
@@ -46,7 +50,9 @@ const registerSchema = {
     ifsc_code: z.string().trim().max(20, 'IFSC code must not exceed 20 characters').optional(),
     bank_name: z.string().trim().max(100, 'Bank name must not exceed 100 characters').optional(),
     account_holder_name: z.string().trim().max(100, 'Account holder name must not exceed 100 characters').optional(),
-    society_id: z.union([z.number(), z.string()]).optional()
+    society_id: z.union([z.number(), z.string()]).optional(),
+    latitude: z.union([z.number(), z.string()]).optional().nullable(),
+    longitude: z.union([z.number(), z.string()]).optional().nullable()
   }).passthrough().preprocess(normalizeAuthPayload)
 };
 
