@@ -8,7 +8,7 @@ const { formatISTISO, formatISTReadable } = require('../../utils/time');
 async function createEnquiry(req, res) {
     try {
         const body = req.body || {};
-        const vendor_id = req.params.vendorId || req.params.id || body.vendor_id || body.vendorId || body.merchant_id || body.merchantId;
+        const vendor_id = req.params?.vendorId || req.params?.id || body.vendor_id || body.vendorId || body.merchant_id || body.merchantId;
         const user_name = String(body.name || body.user_name || body.userName || body.username || '').trim();
         const user_phone = String(body.phone || body.user_phone || body.userPhone || body.mobile || '').trim();
         const user_id = body.user_id || body.userId || null;
