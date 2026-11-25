@@ -15,6 +15,7 @@ const subAdminsRoutes = require('./Admin/subAdminsRoutes');
 const subscriptionsRoutes = require('./Admin/subscriptionsRoutes');
 const configRoutes = require('./Admin/configRoutes');
 const otpRoutes = require('./otp');
+const webhookRoutes = require('./webhookRoutes');
 const cmsRoutes = require('./Cms/cmsRoutes');
 const ratingRoutes = require('./Rating/ratingRoutes');
 const cmsController = require('../controllers/Cms/cmsController');
@@ -84,6 +85,7 @@ router.get(['/api/auth/check-account', '/api/auth/check-user', '/api/auth/check-
 
 // ── Core Business API Routes ────────────────────────────────
 router.use('/api/otp', otpRoutes);                 // Message Central Mobile/Web OTP Service
+router.use(['/api/webhooks', '/api/webhook', '/webhooks'], webhookRoutes); // Meta WhatsApp Webhooks
 router.use('/api/societies', societyRoutes);       // Society management
 router.use('/api/vendors', vendorAuthRoutes);        // Vendor auth & Admin Vendor Spec
 router.use('/api/vendor', vendorAuthRoutes);         // Singular Vendor alias
@@ -122,6 +124,7 @@ router.get([
   '/api/vendor/status'
 ], verifyMerchantToken, vendorAuthController.getVendorStatus);
 router.use('/api/users', userRoutes);               // Resident user auth & profile
+router.use(['/api/user-profile', '/user-profile', '/api/user'], userRoutes); // Website & App user-profile aliases
 router.use('/api/orders', orderRoutes);             // Customer orders & status pipeline
 router.use('/api/vendorPanel', vendorPanelRoutes);  // Vendor dashboard & inventory
 router.use('/api/merchantPanel', vendorPanelRoutes); // Merchant dashboard & inventory alias

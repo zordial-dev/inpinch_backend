@@ -1,6 +1,7 @@
 'use strict';
 const { query } = require('../models/db');
 const { sendOTP: sendCentralOTP, verifyOTP: verifyCentralOTP, formatSmsErrorResponse } = require('../services/messageCentralService');
+const { sendWhatsAppOtp, formatWhatsAppErrorResponse } = require('../services/whatsappService');
 const { generateOTP, verifyOTP, generateTokens } = require('../utils/auth');
 const { sendEmail } = require('../services/emailService');
 const { otpTemplate } = require('../templates/emailTemplates');
@@ -212,6 +213,46 @@ const sendMobileOtpController = async (req, res) => {
       }
     }
 
+    const channel = String(
+      req.body.channel || req.body.delivery_channel || req.body.method || req.body.otp_channel || 'sms'
+    ).toLowerCase();
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // OPTION A: WHATSAPP CLOUD API OTP DELIVERY
+    // ─────────────────────────────────────────────────────────────────────────
+    if (channel === 'whatsapp') {
+      try {
+        const generatedCode = generateOTP(cleanTarget);
+        const waResult = await sendWhatsAppOtp(cleanTarget, generatedCode, { countryCode });
+
+        // Record progressive cooldown entry upon successful dispatch
+        const cooldownInfo = recordOtpSent(cleanTarget);
+
+        return res.status(200).json({
+          success: true,
+          channel: 'whatsapp',
+          provider: 'whatsapp_cloud_api',
+          message: 'Mobile OTP sent successfully via WhatsApp',
+          phone: cleanTarget,
+          message_id: waResult.messageId,
+          verification_id: waResult.messageId,
+          verificationId: waResult.messageId,
+          retry_after: cooldownInfo.retryAfter,
+          cooldown_seconds: cooldownInfo.cooldownSeconds,
+          resend_available_in_seconds: cooldownInfo.retryAfter,
+          attempt: cooldownInfo.attempt,
+          data: waResult
+        });
+      } catch (waErr) {
+        console.error('WhatsApp OTP dispatch error:', waErr.message);
+        const { statusCode, body } = formatWhatsAppErrorResponse(waErr);
+        return res.status(statusCode).json(body);
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // OPTION B: MESSAGE CENTRAL SMS OTP DELIVERY (Default)
+    // ─────────────────────────────────────────────────────────────────────────
     const otpLength = Number(req.body.otp_length || req.body.otpLength || 6);
     const result = await sendCentralOTP(phone, countryCode, 'SMS', otpLength);
 
@@ -241,7 +282,7 @@ const sendMobileOtpController = async (req, res) => {
 
 /**
  * POST /api/otp/mobile/verify-otp (and /api/otp/verify-mobile-otp, /api/mobile/verify-otp)
- * Verifies mobile OTP code submitted by the client via Message Central.
+ * Verifies mobile OTP code submitted by the client via Message Central or WhatsApp.
  */
 const verifyMobileOtpController = async (req, res) => {
   try {
@@ -249,6 +290,9 @@ const verifyMobileOtpController = async (req, res) => {
     const otp = req.body.otp || req.body.otp_code || req.body.code;
     const countryCode = req.body.country_code || req.body.countryCode || req.body.country || req.body.dial_code;
     const verificationId = req.body.verification_id || req.body.verificationId;
+    const channel = String(
+      req.body.channel || req.body.delivery_channel || req.body.method || req.body.otp_channel || ''
+    ).toLowerCase();
 
     if (!phone || !otp) {
       return res.status(400).json({
@@ -263,23 +307,78 @@ const verifyMobileOtpController = async (req, res) => {
     const cleanOtp = String(otp).trim();
     const cleanPhone = String(phone).trim();
 
-    // 1. Verify OTP code with Message Central
-    const result = await verifyCentralOTP(cleanPhone, cleanOtp, countryCode, verificationId);
+    // If channel is explicitly WhatsApp, verify using internal auth hash store
+    if (channel === 'whatsapp') {
+      const verifyResult = verifyOTP(cleanPhone, cleanOtp);
+      if (!verifyResult || !verifyResult.valid) {
+        return res.status(400).json({
+          success: false,
+          verified: false,
+          valid: false,
+          channel: 'whatsapp',
+          error: verifyResult?.reason || 'Invalid or expired WhatsApp OTP code',
+          message: verifyResult?.reason || 'Invalid or expired WhatsApp OTP code'
+        });
+      }
 
-    // 2. Reset progressive cooldown upon successful verification
-    resetCooldown(cleanPhone);
+      resetCooldown(cleanPhone);
+      return res.status(200).json({
+        success: true,
+        verified: true,
+        valid: true,
+        channel: 'whatsapp',
+        provider: 'whatsapp_cloud_api',
+        message: 'WhatsApp OTP verified successfully',
+        phone: cleanPhone,
+        phone_number: cleanPhone
+      });
+    }
 
-    return res.status(200).json({
-      success: true,
-      verified: true,
-      valid: true,
-      channel: 'mobile_sms',
-      provider: 'message_central',
-      message: 'Mobile OTP verified successfully',
-      phone: cleanPhone,
-      phone_number: cleanPhone,
-      data: result
-    });
+    // Default flow: Try Message Central SMS OTP verification
+    try {
+      const result = await verifyCentralOTP(cleanPhone, cleanOtp, countryCode, verificationId);
+
+      // Reset progressive cooldown upon successful verification
+      resetCooldown(cleanPhone);
+
+      return res.status(200).json({
+        success: true,
+        verified: true,
+        valid: true,
+        channel: 'mobile_sms',
+        provider: 'message_central',
+        message: 'Mobile OTP verified successfully',
+        phone: cleanPhone,
+        phone_number: cleanPhone,
+        data: result
+      });
+    } catch (smsError) {
+      // Fallback: If verification with Message Central fails or verificationId was omitted,
+      // check if a valid WhatsApp OTP code was generated and stored in memory!
+      const fallbackResult = verifyOTP(cleanPhone, cleanOtp);
+      if (fallbackResult && fallbackResult.valid) {
+        resetCooldown(cleanPhone);
+        return res.status(200).json({
+          success: true,
+          verified: true,
+          valid: true,
+          channel: 'whatsapp',
+          provider: 'whatsapp_cloud_api',
+          message: 'WhatsApp OTP verified successfully',
+          phone: cleanPhone,
+          phone_number: cleanPhone
+        });
+      }
+
+      console.error('verifyMobileOtpController error:', smsError.message || smsError);
+      return res.status(400).json({
+        success: false,
+        verified: false,
+        valid: false,
+        error: smsError.message || 'Invalid or expired mobile OTP code',
+        message: smsError.message || 'Invalid or expired mobile OTP code'
+      });
+    }
   } catch (error) {
     console.error('verifyMobileOtpController error:', error.message || error);
     return res.status(400).json({
