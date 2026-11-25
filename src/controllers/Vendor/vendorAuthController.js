@@ -1,8 +1,9 @@
 const { query } = require('../../models/db');
 const authConfig = require('../../config/auth');
-const { hashPassword, comparePassword, generateTokens } = require('../../utils/auth');
+const { hashPassword, comparePassword, generateTokens, generateOTP, verifyOTP } = require('../../utils/auth');
 const { recordVendorFieldChanges } = require('../../services/vendorDiffService');
 const { sendOTP: sendCentralOTP, verifyOTP: verifyCentralOTP, formatSmsErrorResponse } = require('../../services/messageCentralService');
+const { sendWhatsAppOtp, formatWhatsAppErrorResponse } = require('../../services/whatsappService');
 const { generateUniquePublicId } = require('../../utils/idGenerator');
 const {
   validateBankDetailsPayload,
@@ -1176,10 +1177,35 @@ async function sendVendorOtp(req, res) {
       }
     }
 
+    const channel = String(
+      req.body?.channel || req.body?.delivery_channel || req.body?.method || req.body?.otp_channel || 'sms'
+    ).toLowerCase();
+
+    if (channel === 'whatsapp') {
+      try {
+        const generatedCode = generateOTP(cleanTarget);
+        const waResult = await sendWhatsAppOtp(cleanTarget, generatedCode, { countryCode });
+        return res.status(200).json({
+          success: true,
+          channel: 'whatsapp',
+          provider: 'whatsapp_cloud_api',
+          message: 'OTP sent successfully via WhatsApp',
+          verification_id: waResult.messageId,
+          verificationId: waResult.messageId,
+          data: waResult
+        });
+      } catch (waErr) {
+        console.error('vendorAuthController WhatsApp sendOtp error:', waErr.message);
+        const { statusCode, body } = formatWhatsAppErrorResponse(waErr);
+        return res.status(statusCode).json(body);
+      }
+    }
+
     const otpLength = Number(req.body?.otp_length || req.body?.otpLength || 6);
     const result = await sendCentralOTP(cleanTarget, countryCode, 'SMS', otpLength);
     return res.status(200).json({
       success: true,
+      channel: 'mobile_sms',
       provider: 'message_central',
       message: 'OTP sent successfully via Message Central',
       verification_id: result.verificationId,
@@ -1213,14 +1239,26 @@ async function loginVendorWithOtp(req, res) {
     const cleanTarget = String(target).trim();
     const isEmail = cleanTarget.includes('@');
 
+    const channel = String(
+      req.body?.channel || req.body?.delivery_channel || req.body?.method || req.body?.otp_channel || ''
+    ).toLowerCase();
+
     // 1. Verify OTP code
     if (isEmail) {
-      const { verifyOTP } = require('../../utils/auth');
       const verifyRes = verifyOTP(cleanTarget.toLowerCase(), cleanOtp);
       if (!verifyRes || !verifyRes.valid) {
         return res.status(400).json({
           success: false,
           error: verifyRes?.reason || 'Invalid or expired OTP code. Please enter the correct verification code.'
+        });
+      }
+    } else if (channel === 'whatsapp') {
+      const verifyRes = verifyOTP(cleanTarget, cleanOtp);
+      if (!verifyRes || !verifyRes.valid) {
+        return res.status(400).json({
+          success: false,
+          channel: 'whatsapp',
+          error: verifyRes?.reason || 'Invalid or expired WhatsApp OTP code. Please enter the correct verification code.'
         });
       }
     } else {
@@ -1231,7 +1269,11 @@ async function loginVendorWithOtp(req, res) {
           return res.status(400).json({ error: 'Invalid or expired OTP code. Please enter the correct verification code.' });
         }
       } catch (otpErr) {
-        return res.status(400).json({ error: otpErr.message || 'Invalid or expired OTP code.' });
+        // Fallback check against in-memory WhatsApp OTP
+        const fallbackRes = verifyOTP(cleanTarget, cleanOtp);
+        if (!fallbackRes || !fallbackRes.valid) {
+          return res.status(400).json({ error: otpErr.message || 'Invalid or expired OTP code.' });
+        }
       }
     }
 

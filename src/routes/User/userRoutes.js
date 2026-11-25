@@ -16,8 +16,8 @@ function injectUserRole(req, res, next) {
 }
 
 // Dedicated Mobile OTP Routes
-router.post(['/mobile/send-otp', '/mobile/send'], injectUserRole, otpController.sendMobileOtp);
-router.post(['/mobile/verify-otp', '/mobile/verify'], injectUserRole, otpController.verifyMobileOtp);
+router.post(['/send-mobile-otp', '/mobile/send-otp', '/mobile/send'], injectUserRole, otpController.sendMobileOtp);
+router.post(['/verify-mobile-otp', '/mobile/verify-otp', '/mobile/verify'], injectUserRole, otpController.verifyMobileOtp);
 
 // Dedicated Email OTP Routes
 router.post(['/email/send-otp', '/email/send'], injectUserRole, otpController.sendEmailOtp);

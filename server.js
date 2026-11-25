@@ -80,7 +80,12 @@ app.use((req, res, next) => {
 });
 
 app.use(owaspSecurityHeaders);
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({
+    limit: '10mb',
+    verify: (req, res, buf) => {
+        req.rawBody = buf;
+    }
+}));
 
 // ── Attach Performance Compression & Logging Middlewares ──────
 app.use(compressionMiddleware);
