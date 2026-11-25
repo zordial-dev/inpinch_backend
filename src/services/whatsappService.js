@@ -1,5 +1,8 @@
 'use strict';
-require('dotenv').config();
+const path = require('path');
+const dotenv = require('dotenv');
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+dotenv.config();
 const axios = require('axios');
 const crypto = require('crypto');
 
@@ -59,11 +62,21 @@ class WhatsAppApiError extends Error {
 }
 
 /**
- * Retrieves configuration values from environment
+ * Retrieves configuration values from environment with approved defaults
  */
 function getConfig() {
-  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
-  const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID
+    || process.env.WHATSAPP_PHONE_ID
+    || process.env.PHONE_NUMBER_ID
+    || '1369647369576088';
+  const businessAccountId = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID
+    || process.env.WHATSAPP_WABA_ID
+    || process.env.WABA_ID
+    || '2282318752550657';
+  const accessToken = process.env.WHATSAPP_ACCESS_TOKEN
+    || process.env.WHATSAPP_TOKEN
+    || process.env.META_ACCESS_TOKEN
+    || process.env.META_WHATSAPP_TOKEN;
   const apiVersion = process.env.WHATSAPP_API_VERSION || 'v22.0';
   const templateName = process.env.WHATSAPP_OTP_TEMPLATE_NAME || 'connexon_auth_code';
   const webhookVerifyToken = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN || 'connexon_agent_token_2026';
@@ -71,6 +84,7 @@ function getConfig() {
 
   return {
     phoneNumberId,
+    businessAccountId,
     accessToken,
     apiVersion,
     templateName,
@@ -92,7 +106,7 @@ async function sendWhatsAppOtp(phone, otpCode, options = {}) {
 
   if (!config.phoneNumberId) {
     throw new WhatsAppApiError(
-      'WhatsApp Cloud API is not configured: WHATSAPP_PHONE_NUMBER_ID is missing.',
+      'WhatsApp Cloud API is not configured: WHATSAPP_PHONE_NUMBER_ID is missing. Please set WHATSAPP_PHONE_NUMBER_ID=1369647369576088 in your server environment.',
       503,
       'WHATSAPP_CONFIG_MISSING'
     );
@@ -100,7 +114,7 @@ async function sendWhatsAppOtp(phone, otpCode, options = {}) {
 
   if (!config.accessToken) {
     throw new WhatsAppApiError(
-      'WhatsApp Cloud API is not configured: WHATSAPP_ACCESS_TOKEN is missing.',
+      'WhatsApp Cloud API is not configured: WHATSAPP_ACCESS_TOKEN is missing. Please set WHATSAPP_ACCESS_TOKEN in your server environment.',
       503,
       'WHATSAPP_CONFIG_MISSING'
     );
