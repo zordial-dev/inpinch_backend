@@ -313,6 +313,36 @@ async function verifyOrderPayment(req, res) {
       }).catch(err => console.error('[Push Notification Error on Payment Verify]:', err.message));
     }
 
+    // 5b. Dispatch WhatsApp Payment Confirmation to Customer (Approved Template: inpinch_payment_success)
+    if (customerPhone) {
+      if (existingOrder?.wa_payment_notified === true) {
+        console.log(`ℹ️ [WHATSAPP DEDUP] Payment confirmation WhatsApp already sent for order #${targetOrderId}. Bypassing.`);
+      } else {
+        const { sendPaymentSuccessCustomerWhatsApp } = require('../../services/whatsappService');
+        (async () => {
+          try {
+            const waResult = await sendPaymentSuccessCustomerWhatsApp({
+              customerPhone: customerPhone,
+              customerName: customerName || 'Customer',
+              totalAmount: verifiedAmount,
+              orderId: targetOrderId,
+              transactionId: verifiedPaymentId,
+              paymentTime: new Date()
+            });
+
+            if (waResult && waResult.success) {
+              await query(
+                `UPDATE orders SET wa_payment_notified = TRUE WHERE order_id = ?`,
+                [targetOrderId]
+              ).catch(() => {});
+            }
+          } catch (waErr) {
+            console.error(`❌ [WHATSAPP PAYMENT NOTIFICATION ERROR] Order #${targetOrderId}:`, waErr.message);
+          }
+        })();
+      }
+    }
+
     // 6. Fetch fresh order object
     const freshOrderRes = await query(`SELECT * FROM orders WHERE order_id = ?`, [targetOrderId]).catch(() => ({ rows: [] }));
 
@@ -745,7 +775,7 @@ async function cashfreeWebhook(req, res) {
 
         // Fetch order to notify vendor
         const ordRes = await query(
-          `SELECT order_id, vendor_id, total_amount, customer_name, remarks, delivery_address FROM orders WHERE order_id = ? OR cashfree_order_id = ?`,
+          `SELECT order_id, vendor_id, total_amount, customer_name, customer_phone, remarks, delivery_address, paid_at, cashfree_payment_id, wa_payment_notified FROM orders WHERE order_id = ? OR cashfree_order_id = ?`,
           [orderId, orderId]
         ).catch(() => ({ rows: [] }));
 
@@ -759,6 +789,40 @@ async function cashfreeWebhook(req, res) {
             remarks: ord.remarks || '',
             delivery_address: ord.delivery_address || ''
           }).catch(() => {});
+
+          // ── Dispatch WhatsApp Payment Confirmation to Customer (Approved Template: inpinch_payment_success) ──
+          if (ord.customer_phone) {
+            // Requirements 1 & 2: Persistent database-level idempotency to prevent duplicate notifications on webhook retries
+            if (ord.wa_payment_notified === true) {
+              console.log(`ℹ️ [WHATSAPP DEDUP] Payment confirmation WhatsApp already sent for order #${ord.order_id}. Bypassing Cashfree webhook retry.`);
+            } else {
+              const { sendPaymentSuccessCustomerWhatsApp } = require('../../services/whatsappService');
+              (async () => {
+                try {
+                  const finalTxId = cfPaymentId || ord.cashfree_payment_id || paymentData?.payment_id || orderId;
+                  const finalPaidAt = ord.paid_at || paymentData?.payment_time || new Date();
+                  const waResult = await sendPaymentSuccessCustomerWhatsApp({
+                    customerPhone: ord.customer_phone,
+                    customerName: ord.customer_name || 'Customer',
+                    totalAmount: Number(ord.total_amount || paymentAmount),
+                    orderId: ord.order_id,
+                    transactionId: finalTxId,
+                    paymentTime: finalPaidAt
+                  });
+
+                  if (waResult && waResult.success) {
+                    await query(
+                      `UPDATE orders SET wa_payment_notified = TRUE WHERE order_id = ? OR cashfree_order_id = ?`,
+                      [orderId, orderId]
+                    ).catch(() => {});
+                  }
+                } catch (waErr) {
+                  // Requirement 4: WhatsApp failures never interrupt payment processing
+                  console.error(`❌ [WHATSAPP PAYMENT NOTIFICATION ERROR] Order #${ord.order_id}:`, waErr.message);
+                }
+              })();
+            }
+          }
         }
       }
     } else if (eventType.includes('REFUND') || event.data?.refund || event.refund) {

@@ -1570,26 +1570,56 @@ class SubscriptionService {
           end_date: sub.end_date
         };
 
+        // Helper to dispatch WhatsApp reminder non-blockingly (guarded while template is PENDING)
+        const trySendWhatsAppReminder = (stageKey, dynamicNote) => {
+          if (!sub.phone_number) return;
+          const { sendSubscriptionExpiryMerchantWhatsApp } = require('./whatsappService');
+          sendSubscriptionExpiryMerchantWhatsApp({
+            merchantPhone: sub.phone_number,
+            vendorName: sub.vendor_name,
+            storeName: sub.store_name,
+            planName: sub.plan_name,
+            status: sub.sub_status,
+            endDate: sub.end_date,
+            dynamicText: dynamicNote
+          }).then(async (waRes) => {
+            // Requirement 8: ONLY record stage in DB if WhatsApp delivery was actually successful (not bypassed/pending)
+            if (waRes && waRes.success && !waRes.bypassed) {
+              if (!sentStages.includes(stageKey)) {
+                sentStages.push(stageKey);
+                await query(`UPDATE subscriptions SET reminders_sent = $1::jsonb WHERE subscription_id = $2`, [JSON.stringify(sentStages), sub.subscription_id]).catch(() => {});
+              }
+            }
+          }).catch(waErr => {
+            // Requirement 4: WhatsApp failures never interrupt subscription cron operations
+            console.error(`❌ [WHATSAPP SUBSCRIPTION REMINDER ERROR] Sub #${sub.subscription_id}:`, waErr.message);
+          });
+        };
+
         if (daysLeft <= 7 && daysLeft > 3 && !sentStages.includes('7_DAYS')) {
           await sendSubscriptionExpiryEmail(vendorData, daysLeft);
           sentStages.push('7_DAYS');
           await query(`UPDATE subscriptions SET reminders_sent = $1::jsonb WHERE subscription_id = $2`, [JSON.stringify(sentStages), sub.subscription_id]);
           report.reminders_sent_7d++;
+          trySendWhatsAppReminder('7_DAYS_WA', `Your subscription expires in ${daysLeft} days. Please renew to keep your store active.`);
         } else if (daysLeft <= 3 && daysLeft > 1 && !sentStages.includes('3_DAYS')) {
           await sendSubscriptionExpiryEmail(vendorData, daysLeft);
           sentStages.push('3_DAYS');
           await query(`UPDATE subscriptions SET reminders_sent = $1::jsonb WHERE subscription_id = $2`, [JSON.stringify(sentStages), sub.subscription_id]);
           report.reminders_sent_3d++;
+          trySendWhatsAppReminder('3_DAYS_WA', `Your subscription expires in ${daysLeft} days. Please renew to avoid storefront deactivation.`);
         } else if (daysLeft === 1 && !sentStages.includes('1_DAY')) {
           await sendSubscriptionExpiryEmail(vendorData, 1);
           sentStages.push('1_DAY');
           await query(`UPDATE subscriptions SET reminders_sent = $1::jsonb WHERE subscription_id = $2`, [JSON.stringify(sentStages), sub.subscription_id]);
           report.reminders_sent_1d++;
+          trySendWhatsAppReminder('1_DAY_WA', 'Your subscription expires tomorrow. Please renew now to maintain uninterrupted resident ordering.');
         } else if (daysLeft === 0 && !sentStages.includes('0_DAY')) {
           await sendSubscriptionExpiryEmail(vendorData, 0);
           sentStages.push('0_DAY');
           await query(`UPDATE subscriptions SET reminders_sent = $1::jsonb WHERE subscription_id = $2`, [JSON.stringify(sentStages), sub.subscription_id]);
           report.reminders_sent_0d++;
+          trySendWhatsAppReminder('0_DAY_WA', 'Your subscription expires today. Please renew on your merchant portal immediately.');
         } else if (daysLeft < 0 && !sentStages.includes('EXPIRED')) {
           sentStages.push('EXPIRED');
           await query(
@@ -1598,6 +1628,7 @@ class SubscriptionService {
           );
           await sendSubscriptionExpiryEmail(vendorData, -1);
           report.subscriptions_expired++;
+          trySendWhatsAppReminder('EXPIRED_WA', 'Your subscription has expired. Please renew on your merchant portal to reactivate your store.');
         }
       } catch (err) {
         console.error(`[SubscriptionService] Reminder check failed for sub #${sub.subscription_id}:`, err.message);

@@ -774,6 +774,48 @@ async function createOrder(req, res) {
       }).catch(err => console.error('[Order Push Notification Error]:', err.message));
     }
 
+    // ── Dispatch WhatsApp Order Confirmation to Customer (Approved Template: inpinch_order_received_customer) ──
+    const targetCustomerPhone = rawPhone || (typeof uLookup !== 'undefined' && uLookup.rows?.[0]?.phone) || req.body.customer_phone;
+    if (targetCustomerPhone && req.body.skip_whatsapp !== true) {
+      const { sendOrderReceivedCustomerWhatsApp } = require('../../services/whatsappService');
+      (async () => {
+        try {
+          // Check DB-level idempotency
+          const checkNotified = await query(
+            `SELECT wa_order_notified FROM orders WHERE order_id = ?`,
+            [orderId]
+          ).catch(() => ({ rows: [] }));
+
+          if (checkNotified.rows?.[0]?.wa_order_notified === true) {
+            console.log(`ℹ️ [WHATSAPP DEDUP] Order received WhatsApp already sent for order #${orderId}. Bypassing duplicate.`);
+            return;
+          }
+
+          const waResult = await sendOrderReceivedCustomerWhatsApp({
+            customerPhone: targetCustomerPhone,
+            customerName: finalCustomerName,
+            orderId: orderId,
+            storeName: storeName,
+            totalAmount: numTotal,
+            items: populatedItems,
+            orderTime: createdAt,
+            paymentStatus: isCashfree ? 'PENDING' : 'COD',
+            deliveryAddress: finalDeliveryAddress
+          });
+
+          if (waResult && waResult.success) {
+            await query(
+              `UPDATE orders SET wa_order_notified = TRUE WHERE order_id = ?`,
+              [orderId]
+            ).catch(() => {});
+          }
+        } catch (waErr) {
+          // Requirement 4: Ensure WhatsApp failures never interrupt order creation
+          console.error(`❌ [WHATSAPP ORDER NOTIFICATION ERROR] Order #${orderId}:`, waErr.message);
+        }
+      })();
+    }
+
     const responsePayload = {
       success: true,
       message: isCashfree

@@ -10,9 +10,9 @@ class OrderService {
    * Creates a customer order inside an ACID database transaction.
    */
   async createOrder({ customer_name, phone_number, address, vendor_id, items, remarks = '' }) {
-    return await withTransaction(async (txQuery) => {
+    const orderResult = await withTransaction(async (txQuery) => {
       // 1. Verify Vendor exists and is ACTIVE
-      const vendorRes = await txQuery(`SELECT vendor_id, status FROM vendors WHERE vendor_id = ?`, [vendor_id]);
+      const vendorRes = await txQuery(`SELECT vendor_id, status, store_name FROM vendors WHERE vendor_id = ?`, [vendor_id]);
       if (vendorRes.rows.length === 0) {
         throw new Error('Vendor not found');
       }
@@ -146,9 +146,50 @@ class OrderService {
       return {
         order_id,
         total_amount: computedTotalAmount,
-        status: 'PLACED'
+        status: 'PLACED',
+        store_name: vendorRes.rows[0]?.store_name || 'Merchant Store',
+        items: verifiedLineItems
       };
     });
+
+    // ── Dispatch WhatsApp Order Confirmation to Customer (AFTER DB COMMIT) ──
+    if (phone_number && orderResult?.order_id) {
+      const { sendOrderReceivedCustomerWhatsApp } = require('./whatsappService');
+      (async () => {
+        try {
+          // Check DB-level idempotency
+          const checkNotified = await query(
+            `SELECT wa_order_notified FROM orders WHERE order_id = ?`,
+            [orderResult.order_id]
+          ).catch(() => ({ rows: [] }));
+
+          if (checkNotified.rows?.[0]?.wa_order_notified === true) {
+            console.log(`ℹ️ [WHATSAPP DEDUP] Order received WhatsApp already sent for order #${orderResult.order_id}. Bypassing.`);
+            return;
+          }
+
+          const waResult = await sendOrderReceivedCustomerWhatsApp({
+            customerPhone: phone_number,
+            customerName: customer_name,
+            orderId: orderResult.order_id,
+            storeName: orderResult.store_name,
+            totalAmount: orderResult.total_amount,
+            items: orderResult.items || items,
+            orderTime: new Date(),
+            paymentStatus: 'COD',
+            deliveryAddress: address
+          });
+
+          if (waResult && waResult.success) {
+            await query(`UPDATE orders SET wa_order_notified = TRUE WHERE order_id = ?`, [orderResult.order_id]).catch(() => {});
+          }
+        } catch (waErr) {
+          console.error(`❌ [WHATSAPP ORDER NOTIFICATION ERROR] Order #${orderResult.order_id}:`, waErr.message);
+        }
+      })();
+    }
+
+    return orderResult;
   }
 
   /**
