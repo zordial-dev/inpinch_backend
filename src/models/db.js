@@ -357,6 +357,8 @@ async function setupTablesPg() {
     `ALTER TABLE orders ADD COLUMN IF NOT EXISTS refund_amount DECIMAL(10,2)`,
     `ALTER TABLE orders ADD COLUMN IF NOT EXISTS refund_status VARCHAR(50)`,
     `ALTER TABLE orders ADD COLUMN IF NOT EXISTS refunded_at TIMESTAMP`,
+    `ALTER TABLE orders ADD COLUMN IF NOT EXISTS wa_order_notified BOOLEAN DEFAULT FALSE`,
+    `ALTER TABLE orders ADD COLUMN IF NOT EXISTS wa_payment_notified BOOLEAN DEFAULT FALSE`,
     `ALTER TABLE payments ADD COLUMN IF NOT EXISTS refund_id VARCHAR(100)`,
     `ALTER TABLE payments ADD COLUMN IF NOT EXISTS refund_amount DECIMAL(10,2)`,
     `ALTER TABLE payments ADD COLUMN IF NOT EXISTS refunded_at TIMESTAMP`,

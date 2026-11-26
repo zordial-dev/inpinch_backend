@@ -152,28 +152,30 @@ const sendMobileOtpController = async (req, res) => {
     const mode = (purpose || '').toLowerCase();
     const isRegistrationIntent = mode === 'register' || mode === 'signup' || mode === 'check_register';
 
-    // For login intent, role MUST be specified to prevent cross-table leakage
-    if (!isRegistrationIntent && !['vendor', 'user'].includes(role)) {
-      return res.status(400).json({
-        success: false,
-        error: '"role" is required for login. Pass role: "vendor" or role: "user".',
-        message: '"role" is required for login. Pass role: "vendor" or role: "user".'
-      });
-    }
+    // Auto-detect role if not explicitly provided
+    let effectiveRole = role;
+    let { user, vendor, exists: accountExists } = await findAccountByPhone(cleanTarget, effectiveRole || null);
 
-    // Verify account existence in database (role is guaranteed non-null for login)
-    const { user, vendor, exists: accountExists } = await findAccountByPhone(cleanTarget, role || null);
+    if (!isRegistrationIntent && !effectiveRole) {
+      if (user) {
+        effectiveRole = 'user';
+      } else if (vendor) {
+        effectiveRole = 'vendor';
+      } else {
+        effectiveRole = 'user';
+      }
+    }
 
     if (isRegistrationIntent) {
       let isAlreadyRegistered = false;
       let label = 'account';
 
-      if (role === 'vendor') {
+      if (effectiveRole === 'vendor') {
         if (vendor) {
           isAlreadyRegistered = true;
           label = 'vendor store account';
         }
-      } else if (role === 'user') {
+      } else if (effectiveRole === 'user') {
         // Dedicated resident customer account already exists (disallow duplicate user registration)
         if (user && !String(user.user_id).startsWith('usr_v_')) {
           isAlreadyRegistered = true;
@@ -193,16 +195,16 @@ const sendMobileOtpController = async (req, res) => {
           success: false,
           exists: true,
           is_registered: true,
-          code: role === 'vendor' ? 'VENDOR_ALREADY_EXISTS' : 'ALREADY_REGISTERED',
+          code: effectiveRole === 'vendor' ? 'VENDOR_ALREADY_EXISTS' : 'ALREADY_REGISTERED',
           error: errorMsg,
           message: errorMsg
         });
       }
     } else {
       // Login or Default: ONLY registered phone numbers can receive OTP!
-      const canLogin = role === 'vendor' ? !!vendor : (role === 'user' ? !!(user || vendor) : accountExists);
+      const canLogin = effectiveRole === 'vendor' ? !!vendor : (effectiveRole === 'user' ? !!(user || vendor) : accountExists);
       if (!canLogin) {
-        const portalLabel = role === 'vendor' ? 'vendor store ' : role === 'user' ? 'user ' : '';
+        const portalLabel = effectiveRole === 'vendor' ? 'vendor store ' : effectiveRole === 'user' ? 'user ' : '';
         console.log(`⚠️ [MOBILE OTP BLOCKED] Unregistered ${portalLabel}account "${cleanTarget}". Disallowing OTP send.`);
         return res.status(404).json({
           success: false,
