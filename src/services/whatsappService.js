@@ -266,6 +266,18 @@ function verifyWebhookSignature(rawBody, signatureHeader) {
 }
 
 /**
+ * Formats order ID consistently (e.g. 3981 -> "#ORD-3981", "ORD-3981" -> "#ORD-3981", "#ORD-3981" -> "#ORD-3981")
+ */
+function formatOrderId(orderId) {
+  if (!orderId) return '#ORD';
+  const clean = String(orderId).trim().replace(/^#/, '');
+  if (/^\d+$/.test(clean)) {
+    return `#ORD-${clean}`;
+  }
+  return `#${clean}`;
+}
+
+/**
  * Formats numeric amount to Indian Rupee representation (e.g. "₹450.00")
  */
 function formatCurrency(amount) {
@@ -332,23 +344,26 @@ function formatAddressSummary(address) {
 }
 
 /**
- * Check whether inpinch_subscription_expiry is enabled for live delivery
- * Defaults to false while template is PENDING Meta review.
+ * Check whether subscription expiry template is enabled for live delivery.
+ * Both v1 and v2 are now approved on Meta (v2 ID: 2669792136780865).
  */
 function isSubscriptionExpiryTemplateApproved() {
-  return process.env.WHATSAPP_TEMPLATE_SUB_EXPIRY_APPROVED === 'true';
+  if (process.env.WHATSAPP_TEMPLATE_SUB_EXPIRY_DISABLED === 'true') {
+    return false;
+  }
+  return true;
 }
 
 /**
  * Resolves active template names with support for environment overrides and version switches.
- * Defaults to the approved v1 templates until WHATSAPP_USE_V2_TEMPLATES=true or template overrides are set.
+ * Defaults to the approved v2 structured line-by-line templates.
  */
 function getActiveTemplateNames() {
-  const useV2 = process.env.WHATSAPP_USE_V2_TEMPLATES === 'true';
+  const useV1 = process.env.WHATSAPP_USE_V1_TEMPLATES === 'true';
   return {
-    orderReceived: process.env.WHATSAPP_TEMPLATE_ORDER_RECEIVED || (useV2 ? 'inpinch_order_received_v2' : 'inpinch_order_received_customer'),
-    paymentSuccess: process.env.WHATSAPP_TEMPLATE_PAYMENT_SUCCESS || (useV2 ? 'inpinch_payment_success_v2' : 'inpinch_payment_success'),
-    subscriptionExpiry: process.env.WHATSAPP_TEMPLATE_SUBSCRIPTION_EXPIRY || (useV2 ? 'inpinch_subscription_expiry_v2' : 'inpinch_subscription_expiry')
+    orderReceived: process.env.WHATSAPP_TEMPLATE_ORDER_RECEIVED || (useV1 ? 'inpinch_order_received_customer' : 'inpinch_order_received_v2'),
+    paymentSuccess: process.env.WHATSAPP_TEMPLATE_PAYMENT_SUCCESS || (useV1 ? 'inpinch_payment_success' : 'inpinch_payment_success_v2'),
+    subscriptionExpiry: process.env.WHATSAPP_TEMPLATE_SUBSCRIPTION_EXPIRY || (useV1 ? 'inpinch_subscription_expiry' : 'inpinch_subscription_expiry_v2')
   };
 }
 
@@ -483,7 +498,7 @@ async function sendPaymentSuccessCustomerWhatsApp({
   const templateName = options.templateName || activeTemplates.paymentSuccess;
   const name = String(customerName || 'Customer').trim();
   const amountStr = formatCurrency(totalAmount);
-  const ordIdStr = `#${String(orderId || 'ORD').replace(/^#/, '')}`;
+  const ordIdStr = formatOrderId(orderId);
   const txRef = String(transactionId || 'cf_pay_confirmed').trim();
   const timeStr = formatDateTimeIST(paymentTime);
 
@@ -523,7 +538,7 @@ async function sendOrderReceivedCustomerWhatsApp({
   const activeTemplates = getActiveTemplateNames();
   const templateName = options.templateName || activeTemplates.orderReceived;
   const name = String(customerName || 'Customer').trim();
-  const ordIdStr = `#${String(orderId || 'ORD').replace(/^#/, '')}`;
+  const ordIdStr = formatOrderId(orderId);
   const store = String(storeName || 'InPinch Store').trim();
   const amountStr = formatCurrency(totalAmount);
   const itemsStr = formatItemsSummary(items);
@@ -640,6 +655,7 @@ module.exports = {
   getActiveTemplateNames,
   normalizeWhatsAppPhone,
   maskPhone,
+  formatOrderId,
   formatCurrency,
   formatDateTimeIST,
   formatItemsSummary,
