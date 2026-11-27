@@ -340,6 +340,19 @@ function isSubscriptionExpiryTemplateApproved() {
 }
 
 /**
+ * Resolves active template names with support for environment overrides and version switches.
+ * Defaults to the approved v1 templates until WHATSAPP_USE_V2_TEMPLATES=true or template overrides are set.
+ */
+function getActiveTemplateNames() {
+  const useV2 = process.env.WHATSAPP_USE_V2_TEMPLATES === 'true';
+  return {
+    orderReceived: process.env.WHATSAPP_TEMPLATE_ORDER_RECEIVED || (useV2 ? 'inpinch_order_received_v2' : 'inpinch_order_received_customer'),
+    paymentSuccess: process.env.WHATSAPP_TEMPLATE_PAYMENT_SUCCESS || (useV2 ? 'inpinch_payment_success_v2' : 'inpinch_payment_success'),
+    subscriptionExpiry: process.env.WHATSAPP_TEMPLATE_SUBSCRIPTION_EXPIRY || (useV2 ? 'inpinch_subscription_expiry_v2' : 'inpinch_subscription_expiry')
+  };
+}
+
+/**
  * Sends a generic template message via Meta WhatsApp Cloud API
  *
  * @param {string} phone - Recipient phone number
@@ -466,7 +479,8 @@ async function sendPaymentSuccessCustomerWhatsApp({
   paymentTime,
   options = {}
 }) {
-  const templateName = options.templateName || 'inpinch_payment_success';
+  const activeTemplates = getActiveTemplateNames();
+  const templateName = options.templateName || activeTemplates.paymentSuccess;
   const name = String(customerName || 'Customer').trim();
   const amountStr = formatCurrency(totalAmount);
   const ordIdStr = `#${String(orderId || 'ORD').replace(/^#/, '')}`;
@@ -506,7 +520,8 @@ async function sendOrderReceivedCustomerWhatsApp({
   deliveryAddress,
   options = {}
 }) {
-  const templateName = options.templateName || 'inpinch_order_received_customer';
+  const activeTemplates = getActiveTemplateNames();
+  const templateName = options.templateName || activeTemplates.orderReceived;
   const name = String(customerName || 'Customer').trim();
   const ordIdStr = `#${String(orderId || 'ORD').replace(/^#/, '')}`;
   const store = String(storeName || 'InPinch Store').trim();
@@ -552,17 +567,17 @@ async function sendSubscriptionExpiryMerchantWhatsApp({
   dynamicText,
   options = {}
 }) {
+  const activeTemplates = getActiveTemplateNames();
+  const templateName = options.templateName || activeTemplates.subscriptionExpiry;
   if (!isSubscriptionExpiryTemplateApproved()) {
-    console.log(`ℹ️ [WHATSAPP GUARD] Template "inpinch_subscription_expiry" is currently PENDING Meta approval. WhatsApp dispatch safely bypassed.`);
+    console.log(`ℹ️ [WHATSAPP GUARD] Template "${templateName}" is currently PENDING Meta approval. WhatsApp dispatch safely bypassed.`);
     return {
       success: false,
       bypassed: true,
       reason: 'TEMPLATE_PENDING_APPROVAL',
-      template: 'inpinch_subscription_expiry'
+      template: templateName
     };
   }
-
-  const templateName = options.templateName || 'inpinch_subscription_expiry';
   const name = String(vendorName || 'Merchant').trim();
   const store = String(storeName || 'Store').trim();
   const plan = String(planName || 'Monthly Merchant Plan').trim();
@@ -622,6 +637,7 @@ module.exports = {
   sendOrderReceivedCustomerWhatsApp,
   sendSubscriptionExpiryMerchantWhatsApp,
   isSubscriptionExpiryTemplateApproved,
+  getActiveTemplateNames,
   normalizeWhatsAppPhone,
   maskPhone,
   formatCurrency,
